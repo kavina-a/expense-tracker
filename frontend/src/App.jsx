@@ -1,16 +1,18 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { LayoutDashboard, List, Tag, Target, Menu, X } from 'lucide-react'
+import { LayoutDashboard, List, Tag, Target, CalendarDays, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import Dashboard    from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 import Categories   from './pages/Categories'
 import Budgets      from './pages/Budgets'
+import Yearly       from './pages/Yearly'
 
 const NAV = [
   { to: '/',             label: 'Dashboard',    icon: LayoutDashboard },
   { to: '/transactions', label: 'Transactions', icon: List },
+  { to: '/yearly',       label: 'Yearly',       icon: CalendarDays },
   { to: '/categories',   label: 'Categories',   icon: Tag },
-  { to: '/budgets',      label: 'Budgets',       icon: Target },
+  { to: '/budgets',      label: 'Budgets',      icon: Target },
 ]
 
 function NavItem({ to, label, Icon, mobile, onClick }) {
@@ -93,6 +95,7 @@ export default function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/categories"   element={<Categories />} />
           <Route path="/budgets"      element={<Budgets />} />
+          <Route path="/yearly"       element={<Yearly />} />
         </Routes>
       </main>
     </div>

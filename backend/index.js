@@ -187,6 +187,11 @@ app.get('/api/daily', apiHandler((req, res) => {
   res.json(db.getDailyTotals(month));
 }));
 
+app.get('/api/yearly', apiHandler((req, res) => {
+  const year = req.query.year || new Date().getFullYear().toString();
+  res.json(db.getYearlyOverview(year));
+}));
+
 // Categories
 app.get('/api/categories', apiHandler((_req, res) => res.json(db.getCategories())));
 

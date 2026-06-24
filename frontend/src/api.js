@@ -34,6 +34,7 @@ export const deleteTransaction = (id) =>
 export const getSummary    = (month)   => req(`/summary${month ? `?month=${month}` : ''}`)
 export const getTrends     = (months)  => req(`/trends?months=${months || 6}`)
 export const getDailyData  = (month)   => req(`/daily${month ? `?month=${month}` : ''}`)
+export const getYearly     = (year)    => req(`/yearly${year ? `?year=${year}` : ''}`)
 
 // Categories
 export const getCategories      = ()         => req('/categories')

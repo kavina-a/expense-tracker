@@ -320,6 +320,68 @@ function checkBudgetAlert(category, month) {
   return { category, spent, limit: budget.monthly_limit, pct, remaining, tier: tier.key };
 }
 
+// ─── Yearly Overview ──────────────────────────────────────────────────────────
+
+function getYearlyOverview(year) {
+  const monthlyRows = db.prepare(`
+    SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
+    FROM transactions
+    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    GROUP BY month, type
+    ORDER BY month ASC
+  `).all(year);
+
+  const categoryRows = db.prepare(`
+    SELECT strftime('%Y-%m', date) as month, type, category, SUM(amount) as total
+    FROM transactions
+    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    GROUP BY month, type, category
+    ORDER BY month ASC
+  `).all(year);
+
+  // Build 12-month array
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const m = `${year}-${String(i + 1).padStart(2, '0')}`;
+    const income  = monthlyRows.find(r => r.month === m && r.type === 'income')?.total  || 0;
+    const expense = monthlyRows.find(r => r.month === m && r.type === 'expense')?.total || 0;
+    return { month: m, income, expense, net: income - expense };
+  });
+
+  const totalIncome  = months.reduce((s, m) => s + m.income,  0);
+  const totalExpense = months.reduce((s, m) => s + m.expense, 0);
+  const savingsRate  = totalIncome > 0 ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0;
+
+  // Per-category arrays (12 values each)
+  const incomeMap  = {};
+  const expenseMap = {};
+  for (const row of categoryRows) {
+    const idx = parseInt(row.month.split('-')[1]) - 1;
+    if (row.type === 'income') {
+      if (!incomeMap[row.category])  incomeMap[row.category]  = Array(12).fill(0);
+      incomeMap[row.category][idx]  += row.total;
+    } else {
+      if (!expenseMap[row.category]) expenseMap[row.category] = Array(12).fill(0);
+      expenseMap[row.category][idx] += row.total;
+    }
+  }
+
+  const toList = (map) =>
+    Object.entries(map)
+      .map(([category, vals]) => ({ category, months: vals, total: vals.reduce((s, v) => s + v, 0) }))
+      .sort((a, b) => b.total - a.total);
+
+  return {
+    year,
+    months,
+    totalIncome,
+    totalExpense,
+    net: totalIncome - totalExpense,
+    savingsRate,
+    incomeByCategory:  toList(incomeMap),
+    expenseByCategory: toList(expenseMap),
+  };
+}
+
 module.exports = {
   insertTransaction,
   getTransactions,
@@ -339,4 +401,5 @@ module.exports = {
   upsertBudget,
   deleteBudget,
   checkBudgetAlert,
+  getYearlyOverview,
 };
