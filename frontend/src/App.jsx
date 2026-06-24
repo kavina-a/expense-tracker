@@ -45,9 +45,9 @@ export default function App() {
         <div className="px-5 py-5 border-b border-border">
           <div className="flex items-center gap-2">
             <span className="text-lg">💸</span>
-            <span className="font-semibold text-sm text-slate-100">Expense Tracker</span>
+            <span className="font-semibold text-sm text-slate-100">Money Tracker</span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">WhatsApp + Dashboard</p>
+          <p className="text-xs text-slate-500 mt-0.5">Telegram · Dashboard</p>
         </div>
         <nav className="flex flex-col gap-1 p-3 flex-1">
           {NAV.map(({ to, label, icon: Icon }) => (
@@ -63,7 +63,7 @@ export default function App() {
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 bg-card border-b border-border">
         <div className="flex items-center gap-2">
           <span>💸</span>
-          <span className="font-semibold text-sm">Expense Tracker</span>
+          <span className="font-semibold text-sm">Money Tracker</span>
         </div>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
