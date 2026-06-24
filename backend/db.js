@@ -1,7 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, 'expenses.db');
+// Use /app/data on Railway (persistent volume), fallback to local for dev
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'expenses.db');
 const db = new Database(DB_PATH);
 
 db.pragma('journal_mode = WAL');
