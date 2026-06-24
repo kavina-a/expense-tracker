@@ -1,6 +1,12 @@
-// In production (Vercel), VITE_API_URL points to Railway backend
-// In dev, falls back to empty string so Vite's proxy handles /api → localhost:3000
-const BASE = (import.meta.env.VITE_API_URL || '') + '/api'
+// Production (Vercel): always use same-origin /api — vercel.json proxies to Railway.
+// Dev: set VITE_API_URL in frontend/.env.local to hit Railway, else Vite proxies to localhost.
+function apiBase() {
+  if (!import.meta.env.DEV) return '/api'
+  const remote = import.meta.env.VITE_API_URL
+  return remote ? `${remote}/api` : '/api'
+}
+
+const BASE = apiBase()
 
 async function req(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
