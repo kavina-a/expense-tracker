@@ -1,7 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// Use /app/data on Railway (persistent volume), fallback to local for dev
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'expenses.db');
 const db = new Database(DB_PATH);
 
@@ -35,33 +34,61 @@ db.exec(`
   );
 `);
 
+// Add type column if it doesn't exist yet (safe migration)
+try {
+  db.exec("ALTER TABLE categories ADD COLUMN type TEXT NOT NULL DEFAULT 'expense'");
+} catch { /* already exists */ }
+
 const DEFAULT_CATEGORIES = [
-  { name: 'Food',             icon: '🍜', color: '#f97316' },
-  { name: 'Transport',        icon: '⛽', color: '#3b82f6' },
-  { name: 'Groceries',        icon: '🛒', color: '#22c55e' },
-  { name: 'Utilities',        icon: '💡', color: '#eab308' },
-  { name: 'Entertainment',    icon: '🎬', color: '#a855f7' },
-  { name: 'Health',           icon: '💊', color: '#ef4444' },
-  { name: 'Education',        icon: '📚', color: '#06b6d4' },
-  { name: 'MathEase Income',  icon: '📐', color: '#10b981' },
-  { name: 'Tutoring Income',  icon: '🎓', color: '#14b8a6' },
-  { name: 'Other Income',     icon: '💰', color: '#84cc16' },
-  { name: 'Other',            icon: '📦', color: '#6b7280' },
+  // ── Income ──────────────────────────────────────────────────────────────────
+  { name: 'Arimac',                 icon: '💼', color: '#14b8a6', type: 'income' },
+  { name: 'Tutopiya',               icon: '🎓', color: '#3b82f6', type: 'income' },
+  { name: 'Pocket Money',           icon: '💵', color: '#22c55e', type: 'income' },
+  { name: 'Class (Thaminah)',       icon: '📚', color: '#6366f1', type: 'income' },
+  { name: 'Icloud (Shakthi)',       icon: '☁️',  color: '#0ea5e9', type: 'income' },
+  { name: 'Birthday Money',         icon: '🎂', color: '#ec4899', type: 'income' },
+  { name: 'Class (Zaiden)',         icon: '📖', color: '#8b5cf6', type: 'income' },
+  { name: 'Stock Exchange - DIV',   icon: '📈', color: '#10b981', type: 'income' },
+  { name: 'Money from rand places', icon: '💰', color: '#eab308', type: 'income' },
+  { name: 'Bottles',                icon: '🍶', color: '#f59e0b', type: 'income' },
+  // ── Expense ─────────────────────────────────────────────────────────────────
+  { name: 'Uber Eats',              icon: '🛵', color: '#f97316', type: 'expense' },
+  { name: 'Uber',                   icon: '🚗', color: '#64748b', type: 'expense' },
+  { name: 'Coffee Shop',            icon: '☕', color: '#a16207', type: 'expense' },
+  { name: 'Out w Friends',          icon: '👥', color: '#a855f7', type: 'expense' },
+  { name: "Kavina's Athal",         icon: '🍜', color: '#ef4444', type: 'expense' },
+  { name: 'Barista',                icon: '🫖', color: '#92400e', type: 'expense' },
+  { name: 'Fast Food',              icon: '🍟', color: '#ca8a04', type: 'expense' },
+  { name: 'AI Tools',               icon: '🤖', color: '#6366f1', type: 'expense' },
+  { name: 'Groceries',              icon: '🛒', color: '#16a34a', type: 'expense' },
+  { name: 'Concert',                icon: '🎵', color: '#7c3aed', type: 'expense' },
+  { name: 'Good Deeds',             icon: '🤲', color: '#f43f5e', type: 'expense' },
+  { name: 'Birthday Gifts',         icon: '🎁', color: '#db2777', type: 'expense' },
+  { name: 'Data Card',              icon: '📱', color: '#0284c7', type: 'expense' },
+  { name: 'Gym',                    icon: '🏋️', color: '#dc2626', type: 'expense' },
+  { name: 'Uber to/from class',     icon: '🚌', color: '#475569', type: 'expense' },
+  { name: 'Stocks',                 icon: '📊', color: '#2563eb', type: 'expense' },
+  { name: 'Dates',                  icon: '💑', color: '#e11d48', type: 'expense' },
+  { name: 'Drinking',               icon: '🍺', color: '#d97706', type: 'expense' },
+  // ── Catch-all ────────────────────────────────────────────────────────────────
+  { name: 'Other',                  icon: '📦', color: '#6b7280', type: 'expense' },
 ];
 
 function seedCategories() {
-  const { cnt } = db.prepare('SELECT COUNT(*) as cnt FROM categories').get();
-  if (cnt === 0) {
-    const insert = db.prepare(
-      'INSERT OR IGNORE INTO categories (name, icon, color, created_at) VALUES (?, ?, ?, ?)'
-    );
-    const now = new Date().toISOString();
-    db.transaction(() => {
-      for (const cat of DEFAULT_CATEGORIES) {
-        insert.run(cat.name, cat.icon, cat.color, now);
-      }
-    })();
-  }
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO categories (name, icon, color, type, created_at) VALUES (?, ?, ?, ?, ?)'
+  );
+  const updateType = db.prepare(
+    "UPDATE categories SET type = ? WHERE name = ? AND type = 'expense'"
+  );
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const cat of DEFAULT_CATEGORIES) {
+      insert.run(cat.name, cat.icon, cat.color, cat.type, now);
+      // Backfill type for already-existing categories
+      if (cat.type === 'income') updateType.run('income', cat.name);
+    }
+  })();
 }
 seedCategories();
 
@@ -159,45 +186,59 @@ function getMonthlyTrends(months = 6) {
 // ─── Categories ───────────────────────────────────────────────────────────────
 
 function getCategories() {
-  return db.prepare('SELECT * FROM categories ORDER BY name ASC').all();
+  return db.prepare('SELECT * FROM categories ORDER BY type ASC, name ASC').all();
 }
 
-function insertCategory({ name, icon, color }) {
+function insertCategory({ name, icon, color, type = 'expense' }) {
   const result = db.prepare(
-    'INSERT INTO categories (name, icon, color, created_at) VALUES (?, ?, ?, ?)'
-  ).run(name, icon || '📦', color || '#6b7280', new Date().toISOString());
+    'INSERT INTO categories (name, icon, color, type, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(name, icon || '📦', color || '#6b7280', type, new Date().toISOString());
   return db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
 }
 
-function updateCategory(id, { name, icon, color }) {
+function updateCategory(id, { name, icon, color, type }) {
   const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
   if (!existing) return null;
 
   const newName = name || existing.name;
 
   db.transaction(() => {
-    // Cascade name change to all rows that reference this category
     if (newName !== existing.name) {
       db.prepare('UPDATE transactions SET category = ? WHERE category = ?').run(newName, existing.name);
       db.prepare('UPDATE budgets SET category = ? WHERE category = ?').run(newName, existing.name);
     }
     db.prepare(
-      'UPDATE categories SET name = ?, icon = COALESCE(?, icon), color = COALESCE(?, color) WHERE id = ?'
-    ).run(newName, icon || null, color || null, id);
+      'UPDATE categories SET name = ?, icon = COALESCE(?, icon), color = COALESCE(?, color), type = COALESCE(?, type) WHERE id = ?'
+    ).run(newName, icon || null, color || null, type || null, id);
   })();
 
   return db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
 }
 
-function deleteCategory(id) {
+function getCategoryUsage(id) {
   const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
   if (!cat) return null;
-  db.transaction(() => {
-    db.prepare("UPDATE transactions SET category = 'Other' WHERE category = ?").run(cat.name);
-    db.prepare("UPDATE budgets SET category = 'Other' WHERE category = ?").run(cat.name);
-    db.prepare('DELETE FROM categories WHERE id = ?').run(id);
-  })();
-  return cat;
+  const txCount = db.prepare(
+    'SELECT COUNT(*) as cnt FROM transactions WHERE category = ?'
+  ).get(cat.name).cnt;
+  const budgetCount = db.prepare(
+    'SELECT COUNT(*) as cnt FROM budgets WHERE category = ?'
+  ).get(cat.name).cnt;
+  // Fetch up to 5 recent transactions as examples
+  const recentTx = db.prepare(
+    'SELECT date, amount, type, description FROM transactions WHERE category = ? ORDER BY date DESC, created_at DESC LIMIT 5'
+  ).all(cat.name);
+  return { cat, txCount, budgetCount, recentTx };
+}
+
+function deleteCategory(id) {
+  const usage = getCategoryUsage(id);
+  if (!usage) return null;
+  if (usage.txCount > 0 || usage.budgetCount > 0) {
+    return { blocked: true, ...usage };
+  }
+  db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+  return { deleted: true, cat: usage.cat };
 }
 
 // ─── Budgets ──────────────────────────────────────────────────────────────────
@@ -258,6 +299,7 @@ module.exports = {
   getCategories,
   insertCategory,
   updateCategory,
+  getCategoryUsage,
   deleteCategory,
   getBudgets,
   getBudgetsWithSpend,

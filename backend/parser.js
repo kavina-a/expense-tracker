@@ -4,18 +4,21 @@ require('dotenv').config();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 function buildSystemPrompt(categories) {
-  const catList = categories.map(c => c.name).join(', ');
-  const today = new Date().toISOString().split('T')[0];
-  return `You are a personal expense tracking assistant for a Sri Lankan user. Parse messages and return ONLY valid JSON.
+  const incomeCategories  = categories.filter(c => c.type === 'income').map(c => c.name).join(', ');
+  const expenseCategories = categories.filter(c => c.type === 'expense' || !c.type).map(c => c.name).join(', ');
+  const today = new Date().toLocaleDateString('sv-SE');
 
-Available categories: ${catList}
+  return `You are a personal income and expense tracking assistant for a Sri Lankan user. Parse messages and return ONLY valid JSON.
+
+INCOME categories (use when money comes IN): ${incomeCategories}
+EXPENSE categories (use when money goes OUT): ${expenseCategories}
 
 For a TRANSACTION (expense or income), return:
 {
   "isQuery": false,
   "amount": <positive number, Rs. implied>,
   "type": "expense" | "income",
-  "category": "<exact name from the list above, pick the most relevant>",
+  "category": "<exact name from the matching list above>",
   "description": "<short 1-3 word label>",
   "date": "<YYYY-MM-DD — use today unless message specifies another date>"
 }
@@ -24,7 +27,7 @@ For a QUERY, return:
 {
   "isQuery": true,
   "queryType": "<one of: summary | today | this_week | last_n | delete_last | category_month | compare | export | budget_set | budget_show | chart_summary | chart_trend | chart_daily | stats | unknown>",
-  "n": <integer — only for last_n, e.g. "last 5">,
+  "n": <integer — only for last_n>,
   "category": "<category name — only for category_month>",
   "month1": "<YYYY-MM — only for compare, the earlier month>",
   "month2": "<YYYY-MM — only for compare, the later month>",
@@ -32,9 +35,11 @@ For a QUERY, return:
   "budgetLimit": <number — only for budget_set>
 }
 
-Rules:
-- "spent X on Y", "X Y", "paid X for Y" → expense
-- "received X", "earned X", "got X" → income  
+Classification rules:
+- "spent X on Y", "X for Y", "paid X", "bought X" → expense, pick closest expense category
+- "received X from Y", "earned X", "got X", "salary X", "payment X" → income, pick closest income category
+- "X from Arimac/Tutopiya/class/etc." → income
+- "Uber", "food", "coffee", "gym", "concert", "groceries" → expense
 - "summary", "this month" alone → summary query
 - "today" → today query
 - "this week" → this_week query
@@ -45,14 +50,13 @@ Rules:
 - "export" → export query
 - "budget [category] [amount]" → budget_set query
 - "budgets", "show budgets", "budget status" → budget_show query
-- "chart", "pie chart", "category chart", "show chart", "pie" → chart_summary query (sends category donut image)
-- "trend", "monthly chart", "trend chart", "6 month chart", "monthly trend" → chart_trend query (sends 6-month bar chart image)
-- "daily chart", "activity chart", "this month chart", "daily" → chart_daily query (sends daily activity chart image)
-- "stats", "all charts", "full report", "report" → stats query (sends all three charts + text summary)
-- Anything else → unknown query
+- "chart", "pie", "category chart" → chart_summary
+- "trend", "monthly chart", "6 month" → chart_trend
+- "daily", "daily chart", "this month chart" → chart_daily
+- "stats", "all charts", "full report", "report" → stats
+- Anything else → unknown
 
-Today's date: ${today}
-Current year: ${new Date().getFullYear()}
+Today: ${today}
 Reply ONLY with valid JSON. No markdown, no explanation.`;
 }
 
@@ -69,11 +73,11 @@ async function parseTextMessage(text, categories) {
     model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: buildSystemPrompt(categories) },
-      { role: 'user', content: text },
+      { role: 'user',   content: text },
     ],
     response_format: { type: 'json_object' },
     temperature: 0,
-    max_tokens: 300,
+    max_tokens: 200,
   });
   const raw = completion.choices?.[0]?.message?.content;
   if (!raw) return { isQuery: true, queryType: 'unknown' };
@@ -83,7 +87,7 @@ async function parseTextMessage(text, categories) {
 async function parseImageMessage(imageBuffer, mimeType, categories) {
   const base64 = imageBuffer.toString('base64');
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: 'gpt-4o-mini',
     messages: [
       {
         role: 'system',
@@ -96,21 +100,15 @@ async function parseImageMessage(imageBuffer, mimeType, categories) {
         content: [
           {
             type: 'image_url',
-            image_url: {
-              url: `data:${mimeType};base64,${base64}`,
-              detail: 'low',
-            },
+            image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'low' },
           },
-          {
-            type: 'text',
-            text: 'Parse this receipt or payment screenshot as an expense transaction.',
-          },
+          { type: 'text', text: 'Parse this receipt or payment screenshot as an expense transaction.' },
         ],
       },
     ],
     response_format: { type: 'json_object' },
     temperature: 0,
-    max_tokens: 300,
+    max_tokens: 200,
   });
   const raw = completion.choices?.[0]?.message?.content;
   if (!raw) return { isQuery: true, queryType: 'unknown' };

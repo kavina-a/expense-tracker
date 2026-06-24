@@ -191,10 +191,10 @@ app.get('/api/daily', apiHandler((req, res) => {
 app.get('/api/categories', apiHandler((_req, res) => res.json(db.getCategories())));
 
 app.post('/api/categories', apiHandler((req, res) => {
-  const { name, icon, color } = req.body;
+  const { name, icon, color, type } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   try {
-    res.status(201).json(db.insertCategory({ name: name.trim(), icon, color }));
+    res.status(201).json(db.insertCategory({ name: name.trim(), icon, color, type }));
   } catch {
     res.status(409).json({ error: 'Category already exists' });
   }
@@ -207,11 +207,20 @@ app.put('/api/categories/:id', apiHandler((req, res) => {
   cat ? res.json(cat) : res.status(404).json({ error: 'Not found' });
 }));
 
+app.get('/api/categories/:id/usage', apiHandler((req, res) => {
+  const id = safeId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const usage = db.getCategoryUsage(id);
+  usage ? res.json(usage) : res.status(404).json({ error: 'Not found' });
+}));
+
 app.delete('/api/categories/:id', apiHandler((req, res) => {
   const id = safeId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
-  const cat = db.deleteCategory(id);
-  cat ? res.json(cat) : res.status(404).json({ error: 'Not found' });
+  const result = db.deleteCategory(id);
+  if (!result) return res.status(404).json({ error: 'Not found' });
+  if (result.blocked) return res.status(409).json({ blocked: true, txCount: result.txCount, budgetCount: result.budgetCount, recentTx: result.recentTx, cat: result.cat });
+  res.json(result.cat);
 }));
 
 // Budgets

@@ -36,10 +36,11 @@ export const getTrends     = (months)  => req(`/trends?months=${months || 6}`)
 export const getDailyData  = (month)   => req(`/daily${month ? `?month=${month}` : ''}`)
 
 // Categories
-export const getCategories    = ()         => req('/categories')
-export const createCategory   = (body)     => req('/categories', { method: 'POST', body: JSON.stringify(body) })
-export const updateCategory   = (id, body) => req(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(body) })
-export const deleteCategory   = (id)       => req(`/categories/${id}`, { method: 'DELETE' })
+export const getCategories      = ()         => req('/categories')
+export const createCategory     = (body)     => req('/categories', { method: 'POST', body: JSON.stringify(body) })
+export const updateCategory     = (id, body) => req(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const getCategoryUsage   = (id)       => req(`/categories/${id}/usage`)
+export const deleteCategory     = (id)       => req(`/categories/${id}`, { method: 'DELETE' })
 
 // Budgets
 export const getBudgets    = (month)     => req(`/budgets${month ? `?month=${month}` : ''}`)
