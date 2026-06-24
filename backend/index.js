@@ -192,6 +192,26 @@ app.get('/api/yearly', apiHandler((req, res) => {
   res.json(db.getYearlyOverview(year));
 }));
 
+// ── Backup / Restore ────────────────────────────────────────────────────────
+// GET  /api/backup        → download full JSON backup
+// POST /api/restore       → merge JSON backup into current DB (INSERT OR IGNORE)
+
+app.get('/api/backup', apiHandler((_req, res) => {
+  const data = db.getFullBackup();
+  const filename = `money-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.json(data);
+}));
+
+app.post('/api/restore', apiHandler((req, res) => {
+  const { version, transactions, categories, budgets } = req.body || {};
+  if (!transactions && !categories && !budgets) {
+    return res.status(400).json({ error: 'Invalid backup format' });
+  }
+  const result = db.restoreFromBackup({ transactions, categories, budgets });
+  res.json({ ok: true, ...result });
+}));
+
 // Categories
 app.get('/api/categories', apiHandler((_req, res) => res.json(db.getCategories())));
 
@@ -310,8 +330,11 @@ if (fs.existsSync(FRONTEND_DIST)) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n🚀  Expense Tracker running`);
+  const dbPath = process.env.DB_PATH || '(local fallback — DB_PATH not set!)';
+  console.log(`\n🚀  Money Tracker running`);
+  console.log(`💾  Database:         ${dbPath}`);
   console.log(`📊  Dashboard:        http://localhost:${PORT}`);
   console.log(`🔗  WhatsApp webhook: http://localhost:${PORT}/webhook`);
-  console.log(`📱  Telegram webhook: http://localhost:${PORT}/telegram\n`);
+  console.log(`📱  Telegram webhook: http://localhost:${PORT}/telegram`);
+  console.log(`📦  Backup:           GET ${PORT}/api/backup\n`);
 });

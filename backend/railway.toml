@@ -1,6 +1,10 @@
 [build]
 builder = "RAILPACK"
 
+# Only redeploy when backend files actually change.
+# Frontend-only pushes (Vercel) will NOT trigger a Railway rebuild.
+watchPaths = ["backend/**"]
+
 [deploy]
 startCommand = "node index.js"
 healthcheckPath = "/health"

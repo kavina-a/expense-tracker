@@ -382,6 +382,56 @@ function getYearlyOverview(year) {
   };
 }
 
+// ─── Backup / Restore ─────────────────────────────────────────────────────────
+
+function getFullBackup() {
+  return {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    transactions: db.prepare(
+      `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER} ORDER BY date ASC, created_at ASC`
+    ).all(),
+    categories: db.prepare('SELECT * FROM categories ORDER BY id ASC').all(),
+    budgets:    db.prepare('SELECT * FROM budgets ORDER BY id ASC').all(),
+  };
+}
+
+function restoreFromBackup({ transactions = [], categories = [], budgets = [] }) {
+  let txInserted = 0, catInserted = 0, budgetInserted = 0;
+
+  db.transaction(() => {
+    const insertTx = db.prepare(`
+      INSERT OR IGNORE INTO transactions
+        (id, amount, type, category, description, date, created_at, raw_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const t of transactions) {
+      insertTx.run(t.id, t.amount, t.type, t.category, t.description, t.date, t.created_at, t.raw_message);
+      txInserted++;
+    }
+
+    const insertCat = db.prepare(`
+      INSERT OR IGNORE INTO categories (id, name, icon, color, type, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const c of categories) {
+      insertCat.run(c.id, c.name, c.icon, c.color, c.type || 'expense', c.created_at);
+      catInserted++;
+    }
+
+    const insertBudget = db.prepare(`
+      INSERT OR IGNORE INTO budgets (id, category, monthly_limit, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    for (const b of budgets) {
+      insertBudget.run(b.id, b.category, b.monthly_limit, b.created_at);
+      budgetInserted++;
+    }
+  })();
+
+  return { txInserted, catInserted, budgetInserted };
+}
+
 module.exports = {
   insertTransaction,
   getTransactions,
@@ -402,4 +452,6 @@ module.exports = {
   deleteBudget,
   checkBudgetAlert,
   getYearlyOverview,
+  getFullBackup,
+  restoreFromBackup,
 };

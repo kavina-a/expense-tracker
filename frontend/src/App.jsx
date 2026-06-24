@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { LayoutDashboard, List, Tag, Target, CalendarDays, Menu, X } from 'lucide-react'
+import { LayoutDashboard, List, Tag, Target, CalendarDays, Menu, X, Download } from 'lucide-react'
 import { useState } from 'react'
 import Dashboard    from './pages/Dashboard'
 import Transactions from './pages/Transactions'
@@ -56,8 +56,17 @@ export default function App() {
             <NavItem key={to} to={to} label={label} Icon={Icon} />
           ))}
         </nav>
-        <div className="px-4 py-4 border-t border-border">
-          <p className="text-xs text-slate-600">Personal · Single user</p>
+        <div className="px-4 py-4 border-t border-border space-y-2">
+          <a
+            href="/api/backup"
+            download
+            className="flex items-center gap-2 text-xs text-slate-600 hover:text-slate-400 transition-colors"
+            title="Download full JSON backup of all data"
+          >
+            <Download size={12} />
+            Backup data
+          </a>
+          <p className="text-xs text-slate-700">Personal · Single user</p>
         </div>
       </aside>
 
