@@ -102,8 +102,11 @@ function insertTransaction({ amount, type, category, description, date, raw_mess
   return db.prepare('SELECT * FROM transactions WHERE id = ?').get(result.lastInsertRowid);
 }
 
+// Sentinel pattern used by budget alert deduplication — never expose these
+const SENTINEL_FILTER = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')";
+
 function getTransactions({ month, category, type, limit = 500 } = {}) {
-  let query = 'SELECT * FROM transactions WHERE 1=1';
+  let query = `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER}`;
   const params = [];
   if (month)    { query += " AND strftime('%Y-%m', date) = ?"; params.push(month); }
   if (category) { query += ' AND category = ?'; params.push(category); }
@@ -120,14 +123,16 @@ function deleteTransaction(id) {
 }
 
 function deleteLastTransaction() {
-  const tx = db.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 1').get();
+  const tx = db.prepare(
+    `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER} ORDER BY created_at DESC LIMIT 1`
+  ).get();
   if (tx) db.prepare('DELETE FROM transactions WHERE id = ?').run(tx.id);
   return tx;
 }
 
 function getLastNTransactions(n = 5) {
   return db.prepare(
-    'SELECT * FROM transactions ORDER BY date DESC, created_at DESC LIMIT ?'
+    `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER} ORDER BY date DESC, created_at DESC LIMIT ?`
   ).all(n);
 }
 
@@ -135,7 +140,7 @@ function getSummaryByMonth(month) {
   const rows = db.prepare(`
     SELECT type, category, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ?
+    WHERE strftime('%Y-%m', date) = ? ${SENTINEL_FILTER}
     GROUP BY type, category
     ORDER BY total DESC
   `).all(month);
@@ -143,7 +148,7 @@ function getSummaryByMonth(month) {
   const counts = db.prepare(`
     SELECT type, COUNT(*) as cnt
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ?
+    WHERE strftime('%Y-%m', date) = ? ${SENTINEL_FILTER}
     GROUP BY type
   `).all(month);
 
@@ -167,7 +172,7 @@ function getDailyTotals(month) {
   return db.prepare(`
     SELECT date, type, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ?
+    WHERE strftime('%Y-%m', date) = ? ${SENTINEL_FILTER}
     GROUP BY date, type
     ORDER BY date ASC
   `).all(month);
@@ -177,7 +182,7 @@ function getMonthlyTrends(months = 6) {
   return db.prepare(`
     SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
     FROM transactions
-    WHERE date >= date('now', '-' || ? || ' months')
+    WHERE date >= date('now', '-' || ? || ' months') ${SENTINEL_FILTER}
     GROUP BY month, type
     ORDER BY month ASC
   `).all(months);
@@ -219,14 +224,13 @@ function getCategoryUsage(id) {
   const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
   if (!cat) return null;
   const txCount = db.prepare(
-    'SELECT COUNT(*) as cnt FROM transactions WHERE category = ?'
+    `SELECT COUNT(*) as cnt FROM transactions WHERE category = ? ${SENTINEL_FILTER}`
   ).get(cat.name).cnt;
   const budgetCount = db.prepare(
     'SELECT COUNT(*) as cnt FROM budgets WHERE category = ?'
   ).get(cat.name).cnt;
-  // Fetch up to 5 recent transactions as examples
   const recentTx = db.prepare(
-    'SELECT date, amount, type, description FROM transactions WHERE category = ? ORDER BY date DESC, created_at DESC LIMIT 5'
+    `SELECT date, amount, type, description FROM transactions WHERE category = ? ${SENTINEL_FILTER} ORDER BY date DESC, created_at DESC LIMIT 5`
   ).all(cat.name);
   return { cat, txCount, budgetCount, recentTx };
 }
@@ -274,17 +278,46 @@ function deleteBudget(id) {
   return budget;
 }
 
+// Alert thresholds — each fires at most once per category per month per tier
+const ALERT_TIERS = [
+  { key: 'over',    min: 1.00 },
+  { key: 'danger',  min: 0.90 },
+  { key: 'warning', min: 0.75 },
+  { key: 'half',    min: 0.50 },
+];
+
 function checkBudgetAlert(category, month) {
   const budget = db.prepare('SELECT * FROM budgets WHERE category = ?').get(category);
   if (!budget || !budget.monthly_limit) return null;
+
   const { spent } = db.prepare(`
     SELECT COALESCE(SUM(amount), 0) as spent
     FROM transactions
     WHERE category = ? AND type = 'expense' AND strftime('%Y-%m', date) = ?
   `).get(category, month);
+
   const pct = spent / budget.monthly_limit;
-  if (pct >= 0.9) return { category, spent, limit: budget.monthly_limit, pct };
-  return null;
+  const remaining = Math.max(0, budget.monthly_limit - spent);
+
+  // Find the highest tier the user has crossed
+  const tier = ALERT_TIERS.find(t => pct >= t.min);
+  if (!tier) return null;
+
+  // Only fire once per tier per month — track in a lightweight in-memory set
+  // Use a sentinel transaction tag to detect if this tier already alerted this month
+  const sentinelTag = `__budget_alert_${category}_${month}_${tier.key}`;
+  const alreadyFired = db.prepare(
+    "SELECT 1 FROM transactions WHERE raw_message = ? LIMIT 1"
+  ).get(sentinelTag);
+  if (alreadyFired) return null;
+
+  // Record sentinel so this tier doesn't fire again this month
+  db.prepare(`
+    INSERT INTO transactions (amount, type, category, description, date, created_at, raw_message)
+    VALUES (0, 'expense', ?, NULL, ?, ?, ?)
+  `).run(category, `${month}-01`, new Date().toISOString(), sentinelTag);
+
+  return { category, spent, limit: budget.monthly_limit, pct, remaining, tier: tier.key };
 }
 
 module.exports = {

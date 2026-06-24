@@ -97,8 +97,40 @@ function progressBar(pct, width = 10) {
 }
 
 function formatBudgetAlert(alert) {
-  const pct = Math.round(alert.pct * 100);
-  return `⚠️ *${alert.category}* budget alert!\nSpent ${fmt(alert.spent)} of ${fmt(alert.limit)} (${pct}% used this month).`;
+  const pct       = Math.round(alert.pct * 100);
+  const spent     = fmt(alert.spent);
+  const limit     = fmt(alert.limit);
+  const remaining = fmt(alert.remaining);
+  const bar       = progressBar(pct, 12);
+
+  const messages = {
+    half: [
+      `📊 Budget check — ${alert.category}`,
+      `${bar} ${pct}%`,
+      `Spent ${spent} of ${limit} this month.`,
+      `You still have ${remaining} left — halfway through your budget.`,
+    ],
+    warning: [
+      `⚠️ Budget warning — ${alert.category}`,
+      `${bar} ${pct}%`,
+      `Spent ${spent} of ${limit} this month.`,
+      `Only ${remaining} remaining — consider slowing down here.`,
+    ],
+    danger: [
+      `🚨 Budget danger — ${alert.category}`,
+      `${bar} ${pct}%`,
+      `Spent ${spent} of ${limit} this month.`,
+      `Just ${remaining} left! You're almost at your limit.`,
+    ],
+    over: [
+      `🔴 Budget exceeded — ${alert.category}`,
+      `${bar} ${pct}%`,
+      `Spent ${spent} — your ${limit} budget is blown by ${fmt(alert.spent - alert.limit)}.`,
+      `Consider adjusting your budget for next month.`,
+    ],
+  };
+
+  return (messages[alert.tier] || messages.warning).join('\n');
 }
 
 function formatCsvExport(transactions) {
