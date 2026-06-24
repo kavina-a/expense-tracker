@@ -165,11 +165,46 @@ app.get('/api/transactions', apiHandler((req, res) => {
   res.json(db.getTransactions({ month, category, type }));
 }));
 
+app.post('/api/transactions', apiHandler((req, res) => {
+  const { amount, type, category, description, date } = req.body;
+  const parsedAmount = parseFloat(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return res.status(400).json({ error: 'A positive amount is required' });
+  if (!type || !['income', 'expense'].includes(type)) return res.status(400).json({ error: 'type must be income or expense' });
+  if (!category?.trim()) return res.status(400).json({ error: 'category is required' });
+  const txDate = date || new Date().toLocaleDateString('sv-SE');
+  const tx = db.insertTransaction({ amount: parsedAmount, type, category: category.trim(), description: description || null, date: txDate });
+  res.status(201).json(tx);
+}));
+
+app.put('/api/transactions/:id', apiHandler((req, res) => {
+  const id = safeId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const { amount, type, category, description, date } = req.body;
+  if (type && !['income', 'expense'].includes(type)) return res.status(400).json({ error: 'type must be income or expense' });
+  if (amount != null && (!Number.isFinite(parseFloat(amount)) || parseFloat(amount) <= 0)) return res.status(400).json({ error: 'A positive amount is required' });
+  const tx = db.updateTransaction(id, { amount: amount ? parseFloat(amount) : undefined, type, category, description, date });
+  tx ? res.json(tx) : res.status(404).json({ error: 'Not found' });
+}));
+
 app.delete('/api/transactions/:id', apiHandler((req, res) => {
   const id = safeId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const deleted = db.deleteTransaction(id);
   deleted ? res.json(deleted) : res.status(404).json({ error: 'Not found' });
+}));
+
+app.post('/api/transactions/bulk-delete', apiHandler((req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+  const deleted = db.bulkDeleteTransactions(ids.map(id => parseInt(id, 10)).filter(Number.isFinite));
+  res.json({ deleted });
+}));
+
+app.post('/api/transactions/bulk-recategorize', apiHandler((req, res) => {
+  const { ids, category } = req.body;
+  if (!Array.isArray(ids) || !ids.length || !category) return res.status(400).json({ error: 'ids and category required' });
+  const updated = db.bulkRecategorize(ids.map(id => parseInt(id, 10)).filter(Number.isFinite), category);
+  res.json({ updated });
 }));
 
 app.get('/api/summary', apiHandler((req, res) => {
@@ -279,6 +314,36 @@ app.delete('/api/budgets/:id', apiHandler((req, res) => {
   const id = safeId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const deleted = db.deleteBudget(id);
+  deleted ? res.json(deleted) : res.status(404).json({ error: 'Not found' });
+}));
+
+// Category trends
+app.get('/api/category-trends', apiHandler((req, res) => {
+  const { category, months } = req.query;
+  if (!category) return res.status(400).json({ error: 'category is required' });
+  res.json(db.getCategoryTrends(category, Math.min(parseInt(months) || 6, 24)));
+}));
+
+// Savings goals
+app.get('/api/savings-goals', apiHandler((_req, res) => res.json(db.getSavingsGoals())));
+
+app.post('/api/savings-goals', apiHandler((req, res) => {
+  const { name, target, deadline, icon, color } = req.body;
+  if (!name?.trim() || !target || parseFloat(target) <= 0) return res.status(400).json({ error: 'name and positive target required' });
+  res.status(201).json(db.insertSavingsGoal({ name: name.trim(), target: parseFloat(target), deadline, icon, color }));
+}));
+
+app.put('/api/savings-goals/:id', apiHandler((req, res) => {
+  const id = safeId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const goal = db.updateSavingsGoal(id, req.body);
+  goal ? res.json(goal) : res.status(404).json({ error: 'Not found' });
+}));
+
+app.delete('/api/savings-goals/:id', apiHandler((req, res) => {
+  const id = safeId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const deleted = db.deleteSavingsGoal(id);
   deleted ? res.json(deleted) : res.status(404).json({ error: 'Not found' });
 }));
 

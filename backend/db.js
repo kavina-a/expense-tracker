@@ -32,6 +32,17 @@ db.exec(`
     color      TEXT,
     created_at TEXT    NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS savings_goals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    target      REAL    NOT NULL,
+    saved       REAL    NOT NULL DEFAULT 0,
+    deadline    TEXT,
+    icon        TEXT    DEFAULT '🎯',
+    color       TEXT    DEFAULT '#6B8F71',
+    created_at  TEXT    NOT NULL
+  );
 `);
 
 // Add type column if it doesn't exist yet (safe migration)
@@ -114,6 +125,44 @@ function getTransactions({ month, category, type, limit = 500 } = {}) {
   query += ' ORDER BY date DESC, created_at DESC LIMIT ?';
   params.push(limit);
   return db.prepare(query).all(...params);
+}
+
+function updateTransaction(id, { amount, type, category, description, date }) {
+  const tx = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+  if (!tx) return null;
+  db.prepare(`
+    UPDATE transactions
+    SET amount = COALESCE(?, amount),
+        type = COALESCE(?, type),
+        category = COALESCE(?, category),
+        description = ?,
+        date = COALESCE(?, date)
+    WHERE id = ?
+  `).run(
+    amount != null ? amount : null,
+    type || null,
+    category || null,
+    description !== undefined ? description : tx.description,
+    date || null,
+    id
+  );
+  return db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+}
+
+function bulkDeleteTransactions(ids) {
+  if (!ids?.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const { changes } = db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...ids);
+  return changes;
+}
+
+function bulkRecategorize(ids, newCategory) {
+  if (!ids?.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const { changes } = db.prepare(
+    `UPDATE transactions SET category = ? WHERE id IN (${placeholders})`
+  ).run(newCategory, ...ids);
+  return changes;
 }
 
 function deleteTransaction(id) {
@@ -382,6 +431,49 @@ function getYearlyOverview(year) {
   };
 }
 
+// ─── Category Trends ─────────────────────────────────────────────────────────
+
+function getCategoryTrends(category, months = 6) {
+  return db.prepare(`
+    SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+    FROM transactions
+    WHERE category = ? AND date >= date('now', '-' || ? || ' months') ${SENTINEL_FILTER}
+    GROUP BY month
+    ORDER BY month ASC
+  `).all(category, months);
+}
+
+// ─── Savings Goals ────────────────────────────────────────────────────────────
+
+function getSavingsGoals() {
+  return db.prepare('SELECT * FROM savings_goals ORDER BY created_at DESC').all();
+}
+
+function insertSavingsGoal({ name, target, deadline, icon, color }) {
+  const result = db.prepare(
+    'INSERT INTO savings_goals (name, target, saved, deadline, icon, color, created_at) VALUES (?, ?, 0, ?, ?, ?, ?)'
+  ).run(name, target, deadline || null, icon || '🎯', color || '#6B8F71', new Date().toISOString());
+  return db.prepare('SELECT * FROM savings_goals WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function updateSavingsGoal(id, { name, target, saved, deadline, icon, color }) {
+  const existing = db.prepare('SELECT * FROM savings_goals WHERE id = ?').get(id);
+  if (!existing) return null;
+  db.prepare(`
+    UPDATE savings_goals
+    SET name = COALESCE(?, name), target = COALESCE(?, target), saved = COALESCE(?, saved),
+        deadline = COALESCE(?, deadline), icon = COALESCE(?, icon), color = COALESCE(?, color)
+    WHERE id = ?
+  `).run(name || null, target ?? null, saved ?? null, deadline || null, icon || null, color || null, id);
+  return db.prepare('SELECT * FROM savings_goals WHERE id = ?').get(id);
+}
+
+function deleteSavingsGoal(id) {
+  const goal = db.prepare('SELECT * FROM savings_goals WHERE id = ?').get(id);
+  if (goal) db.prepare('DELETE FROM savings_goals WHERE id = ?').run(id);
+  return goal;
+}
+
 // ─── Backup / Restore ─────────────────────────────────────────────────────────
 
 function getFullBackup() {
@@ -434,13 +526,17 @@ function restoreFromBackup({ transactions = [], categories = [], budgets = [] })
 
 module.exports = {
   insertTransaction,
+  updateTransaction,
   getTransactions,
   deleteTransaction,
+  bulkDeleteTransactions,
+  bulkRecategorize,
   deleteLastTransaction,
   getLastNTransactions,
   getSummaryByMonth,
   getDailyTotals,
   getMonthlyTrends,
+  getCategoryTrends,
   getCategories,
   insertCategory,
   updateCategory,
@@ -452,6 +548,10 @@ module.exports = {
   deleteBudget,
   checkBudgetAlert,
   getYearlyOverview,
+  getSavingsGoals,
+  insertSavingsGoal,
+  updateSavingsGoal,
+  deleteSavingsGoal,
   getFullBackup,
   restoreFromBackup,
 };
