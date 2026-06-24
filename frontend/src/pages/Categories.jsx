@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCategories, createCategory, updateCategory, getCategoryUsage, deleteCategory } from '../api'
 import { Plus, Pencil, Trash2, X, AlertTriangle, TrendingUp, TrendingDown, SmilePlus } from 'lucide-react'

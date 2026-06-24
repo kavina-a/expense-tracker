@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
+import { Routes, Route, NavLink } from 'react-router-dom'
 import { Home, Clock, PlusCircle, BarChart3, User, ChevronLeft, ChevronRight, Download, Tag, Target, Crosshair } from 'lucide-react'
 import { useState } from 'react'
 import Dashboard      from './pages/Dashboard'
@@ -49,7 +49,7 @@ function SidebarLink({ to, label, Icon, collapsed }) {
   )
 }
 
-function BottomTab({ to, label, Icon, center }) {
+function BottomTab({ to, label, icon: Icon, center }) {
   return (
     <NavLink
       to={to}
