@@ -349,7 +349,16 @@ app.delete('/api/savings-goals/:id', apiHandler((req, res) => {
 
 // ─── Health check + Meta-required pages ──────────────────────────────────────
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => {
+  const info = db.getDbInfo();
+  res.json({
+    status: 'ok',
+    database: info.dbPath,
+    onVolume: info.onVolume,
+    volumeMounted: info.volumeMounted,
+    persistent: info.persistent,
+  });
+});
 
 app.get('/privacy', (_req, res) => {
   res.send(`<!DOCTYPE html><html><head><title>Privacy Policy</title>
@@ -395,9 +404,12 @@ if (fs.existsSync(FRONTEND_DIST)) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  const dbPath = process.env.DB_PATH || '(local fallback — DB_PATH not set!)';
+  const info = db.getDbInfo();
   console.log(`\n🚀  Money Tracker running`);
-  console.log(`💾  Database:         ${dbPath}`);
+  console.log(`💾  Database:         ${info.dbPath}`);
+  if (info.volumeMounted) {
+    console.log(`📀  Volume:           ${info.onVolume ? 'OK — DB on /app/data' : 'MOUNTED but DB path is wrong!'}`);
+  }
   console.log(`📊  Dashboard:        http://localhost:${PORT}`);
   console.log(`🔗  WhatsApp webhook: http://localhost:${PORT}/webhook`);
   console.log(`📱  Telegram webhook: http://localhost:${PORT}/telegram`);

@@ -1,8 +1,41 @@
 const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'expenses.db');
+const RAILWAY_VOLUME_DIR = '/app/data';
+
+function resolveDbPath() {
+  if (process.env.DB_PATH) return process.env.DB_PATH;
+  if (fs.existsSync(RAILWAY_VOLUME_DIR)) {
+    return path.join(RAILWAY_VOLUME_DIR, 'expenses.db');
+  }
+  return path.join(__dirname, 'expenses.db');
+}
+
+function getDbInfo() {
+  const dbPath = resolveDbPath();
+  const onVolume = dbPath.startsWith(RAILWAY_VOLUME_DIR + path.sep);
+  const volumeMounted = fs.existsSync(RAILWAY_VOLUME_DIR);
+  const persistent =
+    onVolume ||
+    (!volumeMounted && !process.env.RAILWAY_ENVIRONMENT); // local dev
+  return { dbPath, onVolume, volumeMounted, persistent };
+}
+
+const { dbPath: DB_PATH, onVolume, volumeMounted, persistent } = getDbInfo();
+
+if (volumeMounted && !onVolume) {
+  console.warn(
+    `[db] WARNING: DB_PATH is "${DB_PATH}" but Railway volume is at ${RAILWAY_VOLUME_DIR}. ` +
+    `Set DB_PATH=${path.join(RAILWAY_VOLUME_DIR, 'expenses.db')} or unset DB_PATH to use the volume.`
+  );
+}
+
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
 const db = new Database(DB_PATH);
+console.log(`[db] Using ${DB_PATH}${onVolume ? ' (persistent volume)' : persistent ? '' : ' (ephemeral — will reset on redeploy!)'}`);
 
 db.pragma('journal_mode = WAL');
 
@@ -554,4 +587,5 @@ module.exports = {
   deleteSavingsGoal,
   getFullBackup,
   restoreFromBackup,
+  getDbInfo,
 };
