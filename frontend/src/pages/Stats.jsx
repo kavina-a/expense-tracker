@@ -208,12 +208,12 @@ export default function Stats() {
           <p className="text-[11px] text-warm-500 tracking-wide mb-4">INCOME VS EXPENSES</p>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={barData} barGap={3} margin={{ top: 5, right: 0, bottom: 0, left: -10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E8DFD2" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8F8274' }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: '#B5A898' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(196,96,58,0.05)' }} />
-              <Bar dataKey="income" fill="#6B8F71" radius={[4, 4, 0, 0]} maxBarSize={20} />
-              <Bar dataKey="expense" fill="#C4603A" radius={[4, 4, 0, 0]} maxBarSize={20} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#737373' }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 9, fill: '#A3A3A3' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(10,10,10,0.04)' }} />
+              <Bar dataKey="income" fill="#737373" radius={[4, 4, 0, 0]} maxBarSize={20} />
+              <Bar dataKey="expense" fill="#0A0A0A" radius={[4, 4, 0, 0]} maxBarSize={20} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -226,13 +226,13 @@ export default function Stats() {
           <p className="text-[11px] text-warm-500 tracking-wide mb-4">MONTHLY NET BALANCE</p>
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={barData} margin={{ top: 5, right: 0, bottom: 0, left: -10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E8DFD2" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8F8274' }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: '#B5A898' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(196,96,58,0.05)' }} />
-              <ReferenceLine y={0} stroke="#D4C8B8" strokeWidth={1} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#737373' }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 9, fill: '#A3A3A3' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(10,10,10,0.04)' }} />
+              <ReferenceLine y={0} stroke="#D4D4D4" strokeWidth={1} />
               <Bar dataKey="net" name="Net" radius={[4, 4, 0, 0]} maxBarSize={20}>
-                {barData.map((entry, i) => (<Cell key={i} fill={entry.net >= 0 ? '#6B8F71' : '#C4603A'} />))}
+                {barData.map((entry, i) => (<Cell key={i} fill={entry.net >= 0 ? '#525252' : '#0A0A0A'} />))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -257,7 +257,7 @@ export default function Stats() {
                     icon={cat.icon || '📦'}
                     amount={e.total}
                     total={totalExpenseAmt}
-                    color={cat.color || '#C4603A'}
+                    color={cat.color || '#0A0A0A'}
                     delta={delta}
                   />
                 </div>
@@ -278,11 +278,11 @@ export default function Stats() {
           <p className="text-[11px] text-warm-500 tracking-wide mb-4">SPENDING OVER {range} MONTHS</p>
           <ResponsiveContainer width="100%" height={160}>
             <LineChart data={catLineData} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E8DFD2" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8F8274' }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: '#B5A898' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#737373' }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 9, fill: '#A3A3A3' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
               <Tooltip content={<ChartTooltip />} />
-              <Line type="monotone" dataKey="total" name={selectedCat} stroke={catMap[selectedCat]?.color || '#C4603A'} strokeWidth={2.5} dot={{ r: 4, fill: catMap[selectedCat]?.color || '#C4603A' }} />
+              <Line type="monotone" dataKey="total" name={selectedCat} stroke={catMap[selectedCat]?.color || '#0A0A0A'} strokeWidth={2.5} dot={{ r: 4, fill: catMap[selectedCat]?.color || '#0A0A0A' }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -350,7 +350,7 @@ export default function Stats() {
                   icon={cat.icon || '💰'}
                   amount={e.total}
                   total={totalIncomeAmt}
-                  color={cat.color || '#6B8F71'}
+                  color={cat.color || '#525252'}
                 />
               )
             })}

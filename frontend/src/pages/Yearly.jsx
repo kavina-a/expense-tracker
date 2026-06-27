@@ -167,7 +167,7 @@ function CategoryTable({ rows, catMap, title, color }) {
                   <div className="flex items-center gap-2">
                     <span
                       className="w-5 h-5 rounded-md flex items-center justify-center text-xs shrink-0"
-                      style={{ backgroundColor: (cat.color || '#8F8274') + '15' }}
+                      style={{ backgroundColor: (cat.color || '#525252') + '15' }}
                     >
                       {cat.icon || '📦'}
                     </span>
@@ -300,12 +300,12 @@ export default function Yearly() {
             <p className="text-[11px] text-warm-500 tracking-wide mb-4">MONTHLY COMPARISON — {year}</p>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={barData} barGap={4} margin={{ top: 5, right: 10, bottom: 0, left: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E8DFD2" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8F8274' }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#B5A898' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={36} />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(196,96,58,0.05)' }} />
-                <Bar dataKey="income"  name="Income"   fill="#6B8F71" radius={[4,4,0,0]} maxBarSize={24} />
-                <Bar dataKey="expense" name="Expenses" fill="#C4603A" radius={[4,4,0,0]} maxBarSize={24} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#737373' }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#A3A3A3' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={36} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(10,10,10,0.04)' }} />
+                <Bar dataKey="income"  name="Income"   fill="#737373" radius={[4,4,0,0]} maxBarSize={24} />
+                <Bar dataKey="expense" name="Expenses" fill="#0A0A0A" radius={[4,4,0,0]} maxBarSize={24} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -315,14 +315,14 @@ export default function Yearly() {
             <p className="text-[11px] text-warm-500 tracking-wide mb-4">NET MONTHLY — {year}</p>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={barData} margin={{ top: 5, right: 10, bottom: 0, left: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E8DFD2" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8F8274' }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#B5A898' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={36} />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(196,96,58,0.05)' }} />
-                <ReferenceLine y={0} stroke="#D4C8B8" strokeWidth={1} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#737373' }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#A3A3A3' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={36} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(10,10,10,0.04)' }} />
+                <ReferenceLine y={0} stroke="#D4D4D4" strokeWidth={1} />
                 <Bar dataKey="net" name="Net" radius={[4,4,0,0]} maxBarSize={24}>
                   {barData.map((entry, index) => (
-                    <Cell key={index} fill={entry.net >= 0 ? '#6B8F71' : '#C4603A'} />
+                    <Cell key={index} fill={entry.net >= 0 ? '#525252' : '#0A0A0A'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -372,7 +372,7 @@ export default function Yearly() {
                       <div className="h-2 bg-warm-200/60 rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full transition-all"
-                          style={{ width: `${pct}%`, backgroundColor: cat.color || '#C4603A' }}
+                          style={{ width: `${pct}%`, backgroundColor: cat.color || '#0A0A0A' }}
                         />
                       </div>
                     </div>

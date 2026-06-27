@@ -14,10 +14,10 @@ function GoalFormModal({ initial, onSave, onClose }) {
   const [saved, setSaved]       = useState(initial?.saved?.toString() || '0')
   const [deadline, setDeadline] = useState(initial?.deadline || '')
   const [icon, setIcon]         = useState(initial?.icon || '🎯')
-  const [color, setColor]       = useState(initial?.color || '#6B8F71')
+  const [color, setColor]       = useState(initial?.color || '#525252')
 
   const ICONS = ['🎯','🏠','✈️','🎓','💻','🚗','💍','🎵','📱','💎','🏖️','💊','🎮','👶','📚','🌴']
-  const COLORS = ['#6B8F71','#C4603A','#D4933A','#6366f1','#3b82f6','#ec4899','#06b6d4','#22c55e']
+  const COLORS = ['#0A0A0A','#262626','#404040','#525252','#737373','#8A8A8A','#A3A3A3','#BDBDBD']
 
   const handleSubmit = (e) => {
     e.preventDefault()

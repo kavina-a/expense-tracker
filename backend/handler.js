@@ -76,6 +76,11 @@ async function processMessage({ type, text, imageBuffer, imageMimeType, rawText 
 // ─── Transaction ──────────────────────────────────────────────────────────────
 
 async function handleTransaction(parsed, rawText, today, thisMonth, sender) {
+  if (parsed.needsClarification && parsed.question) {
+    await sender.sendText(parsed.question);
+    return;
+  }
+
   if (!parsed.amount) {
     await sender.sendText("How much was it? Try: 450 lunch");
     return;
@@ -90,7 +95,7 @@ async function handleTransaction(parsed, rawText, today, thisMonth, sender) {
     raw_message: rawText,
   });
 
-  let reply = formatConfirmation(tx);
+  let reply = parsed.confirmationMessage || formatConfirmation(tx);
 
   if (tx.type === 'expense') {
     const alert = db.checkBudgetAlert(tx.category, thisMonth);

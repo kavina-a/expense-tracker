@@ -40,7 +40,7 @@ db.exec(`
     saved       REAL    NOT NULL DEFAULT 0,
     deadline    TEXT,
     icon        TEXT    DEFAULT '🎯',
-    color       TEXT    DEFAULT '#6B8F71',
+    color       TEXT    DEFAULT '#525252',
     created_at  TEXT    NOT NULL
   );
 `);
@@ -52,37 +52,37 @@ try {
 
 const DEFAULT_CATEGORIES = [
   // ── Income ──────────────────────────────────────────────────────────────────
-  { name: 'Arimac',                 icon: '💼', color: '#14b8a6', type: 'income' },
-  { name: 'Tutopiya',               icon: '🎓', color: '#3b82f6', type: 'income' },
-  { name: 'Pocket Money',           icon: '💵', color: '#22c55e', type: 'income' },
-  { name: 'Class (Thaminah)',       icon: '📚', color: '#6366f1', type: 'income' },
-  { name: 'Icloud (Shakthi)',       icon: '☁️',  color: '#0ea5e9', type: 'income' },
-  { name: 'Birthday Money',         icon: '🎂', color: '#ec4899', type: 'income' },
-  { name: 'Class (Zaiden)',         icon: '📖', color: '#8b5cf6', type: 'income' },
-  { name: 'Stock Exchange - DIV',   icon: '📈', color: '#10b981', type: 'income' },
-  { name: 'Money from rand places', icon: '💰', color: '#eab308', type: 'income' },
-  { name: 'Bottles',                icon: '🍶', color: '#f59e0b', type: 'income' },
+  { name: 'Arimac',                 icon: '💼', color: '#0A0A0A', type: 'income' },
+  { name: 'Tutopiya',               icon: '🎓', color: '#262626', type: 'income' },
+  { name: 'Pocket Money',           icon: '💵', color: '#404040', type: 'income' },
+  { name: 'Class (Thaminah)',       icon: '📚', color: '#525252', type: 'income' },
+  { name: 'Icloud (Shakthi)',       icon: '☁️',  color: '#737373', type: 'income' },
+  { name: 'Birthday Money',         icon: '🎂', color: '#8A8A8A', type: 'income' },
+  { name: 'Class (Zaiden)',         icon: '📖', color: '#A3A3A3', type: 'income' },
+  { name: 'Stock Exchange - DIV',   icon: '📈', color: '#171717', type: 'income' },
+  { name: 'Money from rand places', icon: '💰', color: '#3D3D3D', type: 'income' },
+  { name: 'Bottles',                icon: '🍶', color: '#5C5C5C', type: 'income' },
   // ── Expense ─────────────────────────────────────────────────────────────────
-  { name: 'Uber Eats',              icon: '🛵', color: '#f97316', type: 'expense' },
-  { name: 'Uber',                   icon: '🚗', color: '#64748b', type: 'expense' },
-  { name: 'Coffee Shop',            icon: '☕', color: '#a16207', type: 'expense' },
-  { name: 'Out w Friends',          icon: '👥', color: '#a855f7', type: 'expense' },
-  { name: "Kavina's Athal",         icon: '🍜', color: '#ef4444', type: 'expense' },
-  { name: 'Barista',                icon: '🫖', color: '#92400e', type: 'expense' },
-  { name: 'Fast Food',              icon: '🍟', color: '#ca8a04', type: 'expense' },
-  { name: 'AI Tools',               icon: '🤖', color: '#6366f1', type: 'expense' },
-  { name: 'Groceries',              icon: '🛒', color: '#16a34a', type: 'expense' },
-  { name: 'Concert',                icon: '🎵', color: '#7c3aed', type: 'expense' },
-  { name: 'Good Deeds',             icon: '🤲', color: '#f43f5e', type: 'expense' },
-  { name: 'Birthday Gifts',         icon: '🎁', color: '#db2777', type: 'expense' },
-  { name: 'Data Card',              icon: '📱', color: '#0284c7', type: 'expense' },
-  { name: 'Gym',                    icon: '🏋️', color: '#dc2626', type: 'expense' },
-  { name: 'Uber to/from class',     icon: '🚌', color: '#475569', type: 'expense' },
-  { name: 'Stocks',                 icon: '📊', color: '#2563eb', type: 'expense' },
-  { name: 'Dates',                  icon: '💑', color: '#e11d48', type: 'expense' },
-  { name: 'Drinking',               icon: '🍺', color: '#d97706', type: 'expense' },
+  { name: 'Uber Eats',              icon: '🛵', color: '#0A0A0A', type: 'expense' },
+  { name: 'Uber',                   icon: '🚗', color: '#262626', type: 'expense' },
+  { name: 'Coffee Shop',            icon: '☕', color: '#404040', type: 'expense' },
+  { name: 'Out w Friends',          icon: '👥', color: '#525252', type: 'expense' },
+  { name: "Kavina's Athal",         icon: '🍜', color: '#737373', type: 'expense' },
+  { name: 'Barista',                icon: '🫖', color: '#8A8A8A', type: 'expense' },
+  { name: 'Fast Food',              icon: '🍟', color: '#A3A3A3', type: 'expense' },
+  { name: 'AI Tools',               icon: '🤖', color: '#171717', type: 'expense' },
+  { name: 'Groceries',              icon: '🛒', color: '#3D3D3D', type: 'expense' },
+  { name: 'Concert',                icon: '🎵', color: '#5C5C5C', type: 'expense' },
+  { name: 'Good Deeds',             icon: '🤲', color: '#6B6B6B', type: 'expense' },
+  { name: 'Birthday Gifts',         icon: '🎁', color: '#BDBDBD', type: 'expense' },
+  { name: 'Data Card',              icon: '📱', color: '#D4D4D4', type: 'expense' },
+  { name: 'Gym',                    icon: '🏋️', color: '#0A0A0A', type: 'expense' },
+  { name: 'Uber to/from class',     icon: '🚌', color: '#404040', type: 'expense' },
+  { name: 'Stocks',                 icon: '📊', color: '#525252', type: 'expense' },
+  { name: 'Dates',                  icon: '💑', color: '#737373', type: 'expense' },
+  { name: 'Drinking',               icon: '🍺', color: '#8A8A8A', type: 'expense' },
   // ── Catch-all ────────────────────────────────────────────────────────────────
-  { name: 'Other',                  icon: '📦', color: '#6b7280', type: 'expense' },
+  { name: 'Other',                  icon: '📦', color: '#525252', type: 'expense' },
 ];
 
 function seedCategories() {
@@ -246,7 +246,7 @@ function getCategories() {
 function insertCategory({ name, icon, color, type = 'expense' }) {
   const result = db.prepare(
     'INSERT INTO categories (name, icon, color, type, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(name, icon || '📦', color || '#6b7280', type, new Date().toISOString());
+  ).run(name, icon || '📦', color || '#525252', type, new Date().toISOString());
   return db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
 }
 
@@ -452,7 +452,7 @@ function getSavingsGoals() {
 function insertSavingsGoal({ name, target, deadline, icon, color }) {
   const result = db.prepare(
     'INSERT INTO savings_goals (name, target, saved, deadline, icon, color, created_at) VALUES (?, ?, 0, ?, ?, ?, ?)'
-  ).run(name, target, deadline || null, icon || '🎯', color || '#6B8F71', new Date().toISOString());
+  ).run(name, target, deadline || null, icon || '🎯', color || '#525252', new Date().toISOString());
   return db.prepare('SELECT * FROM savings_goals WHERE id = ?').get(result.lastInsertRowid);
 }
 

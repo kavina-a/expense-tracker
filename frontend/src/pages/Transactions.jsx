@@ -204,7 +204,7 @@ function TxRow({ tx, cat, onDelete, onEdit, isConfirming, onConfirm, onCancel, s
       )}
       <div
         className="w-10 h-10 rounded-item flex items-center justify-center text-lg shrink-0 cursor-pointer"
-        style={{ backgroundColor: (cat.color || '#8F8274') + '15' }}
+        style={{ backgroundColor: (cat.color || '#525252') + '15' }}
         onClick={() => onEdit(tx)}
       >
         {cat.icon || '📦'}

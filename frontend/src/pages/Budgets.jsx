@@ -13,7 +13,7 @@ function fmtRs(n) {
 
 function ProgressBar({ pct, color }) {
   const capped = Math.min(pct, 100)
-  const track = pct >= 100 ? '#C4603A' : pct >= 80 ? '#D4933A' : (color || '#6B8F71')
+  const track = pct >= 100 ? '#0A0A0A' : pct >= 80 ? '#525252' : (color || '#737373')
   return (
     <div className="h-2 bg-warm-200/60 rounded-full overflow-hidden">
       <div
@@ -177,7 +177,7 @@ export default function Budgets() {
         <div className="space-y-3">
           {budgets.map(b => {
             const pct     = b.monthly_limit ? Math.round((b.spent / b.monthly_limit) * 100) : 0
-            const color   = colorMap[b.category] || '#8F8274'
+            const color   = colorMap[b.category] || '#525252'
             const catIcon = categories.find(c => c.name === b.category)?.icon || '📦'
 
             return (

@@ -59,7 +59,7 @@ function MiniBarTooltip({ active, payload, label }) {
     <div className="bg-white border border-border rounded-item p-2.5 text-xs">
       <p className="text-warm-600 mb-1">{label}</p>
       {payload.map(p => (
-        <p key={p.name} style={{ color: p.name === 'income' ? '#6B8F71' : '#C4603A' }}>
+        <p key={p.name} style={{ color: p.name === 'income' ? '#737373' : '#0A0A0A' }}>
           {p.name === 'income' ? 'Income' : 'Spent'}: Rs. {p.value.toLocaleString('en-IN')}
         </p>
       ))}
@@ -226,12 +226,12 @@ export default function Dashboard() {
           <p className="text-[11px] text-warm-500 tracking-wide mb-4">LAST 6 MONTHS</p>
           <ResponsiveContainer width="100%" height={140}>
             <BarChart data={barData} barGap={3} margin={{ top: 0, right: 0, bottom: 0, left: -10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E8DFD2" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8F8274' }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 9, fill: '#B5A898' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
-              <Tooltip content={<MiniBarTooltip />} cursor={{ fill: 'rgba(196,96,58,0.05)' }} />
-              <Bar dataKey="income" fill="#6B8F71" radius={[4, 4, 0, 0]} maxBarSize={18} />
-              <Bar dataKey="expense" fill="#C4603A" radius={[4, 4, 0, 0]} maxBarSize={18} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#737373' }} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 9, fill: '#A3A3A3' }} tickFormatter={v => v === 0 ? '0' : `${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={32} />
+              <Tooltip content={<MiniBarTooltip />} cursor={{ fill: 'rgba(10,10,10,0.04)' }} />
+              <Bar dataKey="income" fill="#737373" radius={[4, 4, 0, 0]} maxBarSize={18} />
+              <Bar dataKey="expense" fill="#0A0A0A" radius={[4, 4, 0, 0]} maxBarSize={18} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -255,7 +255,7 @@ export default function Dashboard() {
               const isRecurring = recurringCats.includes(tx.category)
               return (
                 <div key={tx.id} className="flex items-center gap-3 px-5 py-3.5 border-b border-border/60 last:border-0 hover:bg-warm-50/50 transition-colors">
-                  <div className="w-10 h-10 rounded-item flex items-center justify-center text-lg shrink-0" style={{ backgroundColor: (cat.color || '#8F8274') + '15' }}>
+                  <div className="w-10 h-10 rounded-item flex items-center justify-center text-lg shrink-0" style={{ backgroundColor: (cat.color || '#525252') + '15' }}>
                     {cat.icon || '📦'}
                   </div>
                   <div className="flex-1 min-w-0">

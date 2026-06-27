@@ -11,11 +11,11 @@ export default defineConfig({
       manifest: {
         name: 'Money Tracker',
         short_name: 'Money',
-        description: 'Personal money tracker — calm, warm, minimal.',
+        description: 'Personal money tracker — minimal, monochrome, premium.',
         start_url: '/',
         display: 'standalone',
-        background_color: '#FAF7F2',
-        theme_color: '#C4603A',
+        background_color: '#FAFAFA',
+        theme_color: '#0A0A0A',
         orientation: 'portrait-primary',
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },

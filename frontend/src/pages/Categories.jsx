@@ -6,9 +6,9 @@ import data from '@emoji-mart/data'
 import Picker from '@emoji-mart/react'
 
 const PRESET_COLORS = [
-  '#C4603A', '#6B8F71', '#D4933A', '#6366f1', '#3b82f6',
-  '#22c55e', '#ef4444', '#a855f7', '#06b6d4', '#ec4899',
-  '#14b8a6', '#eab308', '#6b7280',
+  '#0A0A0A', '#171717', '#262626', '#404040', '#525252',
+  '#737373', '#8A8A8A', '#A3A3A3', '#BDBDBD', '#D4D4D4',
+  '#3D3D3D', '#5C5C5C', '#6B6B6B',
 ]
 
 function Modal({ title, onClose, children }) {
@@ -30,7 +30,7 @@ function Modal({ title, onClose, children }) {
 function CategoryForm({ initial, onSave, onCancel }) {
   const [name,  setName]  = useState(initial?.name  || '')
   const [icon,  setIcon]  = useState(initial?.icon  || '📦')
-  const [color, setColor] = useState(initial?.color || '#6b7280')
+  const [color, setColor] = useState(initial?.color || '#525252')
   const [type,  setType]  = useState(initial?.type  || 'expense')
   const [showPicker, setShowPicker] = useState(false)
 
