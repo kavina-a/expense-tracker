@@ -82,11 +82,11 @@ app.post('/webhook', async (req, res) => {
     if (msg.type === 'image') {
       const media = await waDownload(msg.image.id);
       if (!media) { await waSend(from, 'Could not download the image. Please try again.'); return; }
-      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]' }, waSender);
+      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'whatsapp' }, waSender);
     } else if (msg.type === 'text') {
       const text = msg.text.body.trim();
       if (!text) return;
-      await processMessage({ type: 'text', text, rawText: text }, waSender);
+      await processMessage({ type: 'text', text, rawText: text, channel: 'whatsapp' }, waSender);
     } else {
       await waSend(from, 'I can only process text messages and receipt images.');
     }
@@ -139,11 +139,11 @@ app.post('/telegram', async (req, res) => {
       const fileId = message.photo[message.photo.length - 1].file_id;
       const media  = await tg.downloadMedia(fileId);
       if (!media) { await tg.sendMessage(chatId, 'Could not download the image. Please try again.'); return; }
-      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]' }, tgSender);
+      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'telegram' }, tgSender);
     } else if (message.text) {
       const text = message.text.trim();
       if (!text) return;
-      await processMessage({ type: 'text', text, rawText: text }, tgSender);
+      await processMessage({ type: 'text', text, rawText: text, channel: 'telegram' }, tgSender);
     } else {
       await tg.sendMessage(chatId, 'I can only process text messages and receipt images.');
     }

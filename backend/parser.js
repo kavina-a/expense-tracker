@@ -1,7 +1,15 @@
 const OpenAI = require('openai');
 require('dotenv').config();
+const { log, logError, preview } = require('./logger');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Railway/containers often fail with openai@4's default node-fetch client
+// ("Premature close"). Native fetch (undici) handles IPv4/IPv6 + chunked responses reliably.
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  fetch: globalThis.fetch,
+  maxRetries: 3,
+  timeout: 60_000,
+});
 
 function buildSystemPrompt(categories) {
   const incomeCategories  = categories.filter(c => c.type === 'income').map(c => c.name).join(', ');
@@ -100,16 +108,55 @@ Today: ${today}
 Reply ONLY with valid JSON. No markdown, no explanation.`;
 }
 
-function safeParseJSON(raw) {
+function safeParseJSON(raw, kind) {
   try {
     return JSON.parse(raw);
-  } catch {
+  } catch (err) {
+    log('warn', 'Parser', 'json_parse_failed', {
+      kind,
+      rawPreview: preview(raw, 200),
+      parseError: err.message,
+    });
     return { isQuery: true, queryType: 'unknown' };
   }
 }
 
+async function callChatCompletion(kind, params, meta = {}) {
+  const start = Date.now();
+  log('info', 'Parser', 'openai_request_start', {
+    kind,
+    model: params.model,
+    maxTokens: params.max_tokens,
+    hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+    ...meta,
+  });
+
+  try {
+    const completion = await openai.chat.completions.create(params);
+    const choice = completion.choices?.[0];
+    log('info', 'Parser', 'openai_request_ok', {
+      kind,
+      model: params.model,
+      durationMs: Date.now() - start,
+      finishReason: choice?.finish_reason,
+      usage: completion.usage,
+      responsePreview: preview(choice?.message?.content, 160),
+    });
+    return completion;
+  } catch (err) {
+    logError('Parser', err, {
+      kind,
+      model: params.model,
+      durationMs: Date.now() - start,
+      hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+      ...meta,
+    });
+    throw err;
+  }
+}
+
 async function parseTextMessage(text, categories) {
-  const completion = await openai.chat.completions.create({
+  const completion = await callChatCompletion('text', {
     model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: buildSystemPrompt(categories) },
@@ -118,15 +165,19 @@ async function parseTextMessage(text, categories) {
     response_format: { type: 'json_object' },
     temperature: 0,
     max_tokens: 300,
-  });
+  }, { inputPreview: preview(text) });
+
   const raw = completion.choices?.[0]?.message?.content;
-  if (!raw) return { isQuery: true, queryType: 'unknown' };
-  return safeParseJSON(raw);
+  if (!raw) {
+    log('warn', 'Parser', 'openai_empty_response', { kind: 'text', inputPreview: preview(text) });
+    return { isQuery: true, queryType: 'unknown' };
+  }
+  return safeParseJSON(raw, 'text');
 }
 
 async function parseImageMessage(imageBuffer, mimeType, categories) {
-  const base64 = imageBuffer.toString('base64');
-  const completion = await openai.chat.completions.create({
+  const imageBytes = imageBuffer?.length || 0;
+  const completion = await callChatCompletion('image', {
     model: 'gpt-4o-mini',
     messages: [
       {
@@ -140,7 +191,7 @@ async function parseImageMessage(imageBuffer, mimeType, categories) {
         content: [
           {
             type: 'image_url',
-            image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'low' },
+            image_url: { url: `data:${mimeType};base64,${imageBuffer.toString('base64')}`, detail: 'low' },
           },
           { type: 'text', text: 'Parse this receipt or payment screenshot as an expense transaction.' },
         ],
@@ -149,10 +200,14 @@ async function parseImageMessage(imageBuffer, mimeType, categories) {
     response_format: { type: 'json_object' },
     temperature: 0,
     max_tokens: 300,
-  });
+  }, { mimeType, imageBytes });
+
   const raw = completion.choices?.[0]?.message?.content;
-  if (!raw) return { isQuery: true, queryType: 'unknown' };
-  return safeParseJSON(raw);
+  if (!raw) {
+    log('warn', 'Parser', 'openai_empty_response', { kind: 'image', mimeType, imageBytes });
+    return { isQuery: true, queryType: 'unknown' };
+  }
+  return safeParseJSON(raw, 'image');
 }
 
 module.exports = { parseTextMessage, parseImageMessage };

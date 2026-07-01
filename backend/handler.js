@@ -10,6 +10,7 @@
 
 const db = require('./db');
 const { parseTextMessage, parseImageMessage } = require('./parser');
+const { log, logError, preview, summarizeParsed } = require('./logger');
 const {
   formatSummary,
   formatTransactionList,
@@ -48,10 +49,19 @@ function enrichWithColors(expenses) {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-async function processMessage({ type, text, imageBuffer, imageMimeType, rawText }, sender) {
+async function processMessage({ type, text, imageBuffer, imageMimeType, rawText, channel = 'unknown' }, sender) {
   const today     = todayStr();
   const thisMonth = thisMonthStr();
   const categories = db.getCategories();
+  const start = Date.now();
+
+  log('info', 'Handler', 'message_received', {
+    channel,
+    type,
+    inputPreview: type === 'text' ? preview(text) : null,
+    imageBytes: type === 'image' ? imageBuffer?.length || 0 : null,
+    imageMimeType: type === 'image' ? imageMimeType : null,
+  });
 
   let parsed;
   try {
@@ -61,27 +71,46 @@ async function processMessage({ type, text, imageBuffer, imageMimeType, rawText 
       parsed = await parseTextMessage(text.trim(), categories);
     }
   } catch (err) {
-    console.error('[Handler] Parse error:', err.message);
+    logError('Handler', err, {
+      channel,
+      type,
+      stage: 'parse',
+      durationMs: Date.now() - start,
+      inputPreview: type === 'text' ? preview(text) : null,
+      imageBytes: type === 'image' ? imageBuffer?.length || 0 : null,
+    });
     await sender.sendText('Something went wrong, try again');
     return;
   }
 
+  log('info', 'Handler', 'message_parsed', {
+    channel,
+    type,
+    durationMs: Date.now() - start,
+    parsed: summarizeParsed(parsed),
+  });
+
   if (parsed.isQuery) {
-    await handleQuery(parsed, today, thisMonth, sender);
+    await handleQuery(parsed, today, thisMonth, sender, channel);
   } else {
-    await handleTransaction(parsed, rawText || text || '[image]', today, thisMonth, sender);
+    await handleTransaction(parsed, rawText || text || '[image]', today, thisMonth, sender, channel);
   }
 }
 
 // ─── Transaction ──────────────────────────────────────────────────────────────
 
-async function handleTransaction(parsed, rawText, today, thisMonth, sender) {
+async function handleTransaction(parsed, rawText, today, thisMonth, sender, channel) {
   if (parsed.needsClarification && parsed.question) {
+    log('info', 'Handler', 'clarification_sent', {
+      channel,
+      questionPreview: preview(parsed.question, 120),
+    });
     await sender.sendText(parsed.question);
     return;
   }
 
   if (!parsed.amount) {
+    log('warn', 'Handler', 'missing_amount', { channel, parsed: summarizeParsed(parsed) });
     await sender.sendText("How much was it? Try: 450 lunch");
     return;
   }
@@ -93,6 +122,15 @@ async function handleTransaction(parsed, rawText, today, thisMonth, sender) {
     description: parsed.description || null,
     date:        parsed.date || today,
     raw_message: rawText,
+  });
+
+  log('info', 'Handler', 'transaction_logged', {
+    channel,
+    txId: tx.id,
+    type: tx.type,
+    amount: tx.amount,
+    category: tx.category,
+    date: tx.date,
   });
 
   let reply = parsed.confirmationMessage || formatConfirmation(tx);
@@ -107,9 +145,12 @@ async function handleTransaction(parsed, rawText, today, thisMonth, sender) {
 
 // ─── Query ────────────────────────────────────────────────────────────────────
 
-async function handleQuery(parsed, today, thisMonth, sender) {
+async function handleQuery(parsed, today, thisMonth, sender, channel) {
   const { queryType } = parsed;
   const iconsMap = categoryIconsMap();
+  const start = Date.now();
+
+  log('info', 'Handler', 'query_start', { channel, queryType });
 
   try {
     switch (queryType) {
@@ -244,13 +285,24 @@ async function handleQuery(parsed, today, thisMonth, sender) {
         break;
       }
       default: {
+        log('warn', 'Handler', 'unknown_query', { channel, parsed: summarizeParsed(parsed) });
         await sender.sendText(
           "I didn't understand that.\n\nTry:\n• 450 lunch\n• spent 1200 on petrol\n• received 5000 tuition\n• summary\n• chart  ← category pie chart\n• trend  ← 6-month bar chart\n• daily  ← this month's daily chart\n• stats  ← full report with all charts\n• today\n• this week\n• last 5\n• delete last\n• budget food 5000\n• compare may vs june"
         );
       }
     }
+    log('info', 'Handler', 'query_done', {
+      channel,
+      queryType,
+      durationMs: Date.now() - start,
+    });
   } catch (err) {
-    console.error('[Handler] Query error:', err);
+    logError('Handler', err, {
+      channel,
+      queryType,
+      stage: 'query',
+      durationMs: Date.now() - start,
+    });
     await sender.sendText('Something went wrong, try again');
   }
 }
