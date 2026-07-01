@@ -37,8 +37,9 @@ export const bulkRecategorize = (ids, category) =>
   req('/transactions/bulk-recategorize', { method: 'POST', body: JSON.stringify({ ids, category }) })
 
 // Summary & charts
-export const getSummary       = (month)    => req(`/summary${month ? `?month=${month}` : ''}`)
-export const getSummaryOverall = ()        => req('/summary?scope=overall')
+export const getSummary        = (month) => req(`/summary${month ? `?month=${month}` : ''}`)
+export const getSummaryOverall = ()     => req('/summary?scope=overall')
+export const getSummaryByYear  = (year) => req(`/summary?scope=year&year=${year}`)
 export const getTrends        = (months)   => req(`/trends?months=${months || 6}`)
 export const getDailyData     = (month)    => req(`/daily${month ? `?month=${month}` : ''}`)
 export const getYearly        = (year)     => req(`/yearly${year ? `?year=${year}` : ''}`)

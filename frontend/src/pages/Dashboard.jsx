@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getSummary, getSummaryOverall, getTrends, getTransactions, getCategories, getBudgets } from '../api'
+import { getSummary, getSummaryOverall, getSummaryByYear, getTrends, getTransactions, getCategories, getBudgets } from '../api'
 import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import {
@@ -10,6 +10,14 @@ import {
 
 function currentMonthStr() {
   return new Date().toLocaleDateString('sv-SE').slice(0, 7)
+}
+
+function currentYearStr() {
+  return String(new Date().getFullYear())
+}
+
+function shiftYear(y, delta) {
+  return String(parseInt(y, 10) + delta)
 }
 
 function formatMonthLabel(m) {
@@ -85,12 +93,18 @@ function SyncBadge({ lastSync }) {
 
 export default function Dashboard() {
   const [month, setMonth] = useState(currentMonthStr)
+  const [year, setYear] = useState(currentYearStr)
   const [balanceScope, setBalanceScope] = useState('overall')
   const isCurrentMonth = month === currentMonthStr()
+  const isCurrentYear = year === currentYearStr()
 
-  const summaryQ    = useQuery({
-    queryKey: ['summary', balanceScope, balanceScope === 'month' ? month : 'overall'],
-    queryFn: () => balanceScope === 'overall' ? getSummaryOverall() : getSummary(month),
+  const summaryQ = useQuery({
+    queryKey: ['summary', balanceScope, balanceScope === 'month' ? month : balanceScope === 'year' ? year : 'overall'],
+    queryFn: () => {
+      if (balanceScope === 'overall') return getSummaryOverall()
+      if (balanceScope === 'year') return getSummaryByYear(year)
+      return getSummary(month)
+    },
   })
   const trendsQ     = useQuery({ queryKey: ['trends'],           queryFn: () => getTrends(6) })
   const categoriesQ = useQuery({ queryKey: ['categories'],       queryFn: getCategories })
@@ -165,12 +179,13 @@ export default function Dashboard() {
 
       {/* Hero balance card */}
       <div className="bg-terra rounded-hero p-6 mb-4 text-white">
-        <div className="flex items-center justify-between gap-3 mb-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
           <p className="text-[11px] font-medium tracking-widest opacity-80">NET BALANCE</p>
           <div className="flex gap-1 p-0.5 rounded-full bg-white/15">
             {[
               { id: 'overall', label: 'Overall' },
-              { id: 'month', label: 'By month' },
+              { id: 'month', label: 'Month' },
+              { id: 'year', label: 'Year' },
             ].map(({ id, label }) => (
               <button
                 key={id}
@@ -187,8 +202,71 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
+
+        {balanceScope === 'overall' && (
+          <p className="text-[10px] tracking-wide opacity-60 mb-1">Lifetime</p>
+        )}
         {balanceScope === 'month' && (
-          <p className="text-[10px] tracking-wide opacity-60 mb-1">{formatMonthLabel(month)}</p>
+          <div className="flex items-center gap-1 mb-1">
+            <button
+              type="button"
+              onClick={() => setMonth(m => shiftMonth(m, -1))}
+              className="p-1 rounded-item text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+              aria-label="Previous month"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <p className="text-[10px] tracking-wide opacity-60 min-w-[120px] text-center">{formatMonthLabel(month)}</p>
+            <button
+              type="button"
+              onClick={() => setMonth(m => shiftMonth(m, 1))}
+              disabled={isCurrentMonth}
+              className="p-1 rounded-item text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30"
+              aria-label="Next month"
+            >
+              <ChevronRight size={14} />
+            </button>
+            {!isCurrentMonth && (
+              <button
+                type="button"
+                onClick={() => setMonth(currentMonthStr())}
+                className="ml-1 px-2 py-0.5 rounded-full text-[9px] font-medium bg-white/15 hover:bg-white/25 transition-colors"
+              >
+                Today
+              </button>
+            )}
+          </div>
+        )}
+        {balanceScope === 'year' && (
+          <div className="flex items-center gap-1 mb-1">
+            <button
+              type="button"
+              onClick={() => setYear(y => shiftYear(y, -1))}
+              className="p-1 rounded-item text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+              aria-label="Previous year"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <p className="text-[10px] tracking-wide opacity-60 min-w-[48px] text-center">{year}</p>
+            <button
+              type="button"
+              onClick={() => setYear(y => shiftYear(y, 1))}
+              disabled={isCurrentYear}
+              className="p-1 rounded-item text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30"
+              aria-label="Next year"
+            >
+              <ChevronRight size={14} />
+            </button>
+            {!isCurrentYear && (
+              <button
+                type="button"
+                onClick={() => setYear(currentYearStr())}
+                className="ml-1 px-2 py-0.5 rounded-full text-[9px] font-medium bg-white/15 hover:bg-white/25 transition-colors"
+              >
+                This year
+              </button>
+            )}
+          </div>
         )}
         <p className="text-[38px] font-medium leading-tight tracking-tight">
           {summary.net >= 0 ? '+' : '−'}Rs. {Math.abs(summary.net).toLocaleString('en-IN')}

@@ -274,6 +274,25 @@ function getSummaryOverall() {
   return buildSummary(rows, counts);
 }
 
+function getSummaryByYear(year) {
+  const rows = db.prepare(`
+    SELECT type, category, SUM(amount) as total
+    FROM transactions
+    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    GROUP BY type, category
+    ORDER BY total DESC
+  `).all(year);
+
+  const counts = db.prepare(`
+    SELECT type, COUNT(*) as cnt
+    FROM transactions
+    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    GROUP BY type
+  `).all(year);
+
+  return { ...buildSummary(rows, counts), year };
+}
+
 function getDailyTotals(month) {
   return db.prepare(`
     SELECT date, type, SUM(amount) as total
@@ -591,6 +610,7 @@ module.exports = {
   deleteLastTransaction,
   getLastNTransactions,
   getSummaryByMonth,
+  getSummaryByYear,
   getSummaryOverall,
   getDailyTotals,
   getMonthlyTrends,

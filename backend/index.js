@@ -211,6 +211,10 @@ app.get('/api/summary', apiHandler((req, res) => {
   if (req.query.scope === 'overall') {
     return res.json(db.getSummaryOverall());
   }
+  if (req.query.scope === 'year') {
+    const year = req.query.year || new Date().getFullYear().toString();
+    return res.json(db.getSummaryByYear(year));
+  }
   const month = req.query.month || thisMonthStr();
   res.json(db.getSummaryByMonth(month));
 }));
