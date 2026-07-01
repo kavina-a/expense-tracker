@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getSummary, getTrends, getTransactions, getCategories, getBudgets } from '../api'
+import { getSummary, getSummaryOverall, getTrends, getTransactions, getCategories, getBudgets } from '../api'
 import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import {
@@ -85,9 +85,13 @@ function SyncBadge({ lastSync }) {
 
 export default function Dashboard() {
   const [month, setMonth] = useState(currentMonthStr)
+  const [balanceScope, setBalanceScope] = useState('overall')
   const isCurrentMonth = month === currentMonthStr()
 
-  const summaryQ    = useQuery({ queryKey: ['summary', month],   queryFn: () => getSummary(month) })
+  const summaryQ    = useQuery({
+    queryKey: ['summary', balanceScope, balanceScope === 'month' ? month : 'overall'],
+    queryFn: () => balanceScope === 'overall' ? getSummaryOverall() : getSummary(month),
+  })
   const trendsQ     = useQuery({ queryKey: ['trends'],           queryFn: () => getTrends(6) })
   const categoriesQ = useQuery({ queryKey: ['categories'],       queryFn: getCategories })
   const recentTxQ   = useQuery({ queryKey: ['transactions', month], queryFn: () => getTransactions({ month, limit: 10 }) })
@@ -161,7 +165,31 @@ export default function Dashboard() {
 
       {/* Hero balance card */}
       <div className="bg-terra rounded-hero p-6 mb-4 text-white">
-        <p className="text-[11px] font-medium tracking-widest opacity-80 mb-1">NET BALANCE</p>
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <p className="text-[11px] font-medium tracking-widest opacity-80">NET BALANCE</p>
+          <div className="flex gap-1 p-0.5 rounded-full bg-white/15">
+            {[
+              { id: 'overall', label: 'Overall' },
+              { id: 'month', label: 'By month' },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setBalanceScope(id)}
+                className={`px-2.5 py-1 rounded-full text-[10px] font-medium tracking-wide transition-colors ${
+                  balanceScope === id
+                    ? 'bg-white text-terra'
+                    : 'text-white/80 hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {balanceScope === 'month' && (
+          <p className="text-[10px] tracking-wide opacity-60 mb-1">{formatMonthLabel(month)}</p>
+        )}
         <p className="text-[38px] font-medium leading-tight tracking-tight">
           {summary.net >= 0 ? '+' : '−'}Rs. {Math.abs(summary.net).toLocaleString('en-IN')}
         </p>

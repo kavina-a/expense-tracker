@@ -208,6 +208,9 @@ app.post('/api/transactions/bulk-recategorize', apiHandler((req, res) => {
 }));
 
 app.get('/api/summary', apiHandler((req, res) => {
+  if (req.query.scope === 'overall') {
+    return res.json(db.getSummaryOverall());
+  }
   const month = req.query.month || thisMonthStr();
   res.json(db.getSummaryByMonth(month));
 }));

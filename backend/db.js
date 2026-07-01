@@ -218,6 +218,24 @@ function getLastNTransactions(n = 5) {
   ).all(n);
 }
 
+function buildSummary(rows, counts, month = null) {
+  const expenses = rows.filter(r => r.type === 'expense');
+  const incomes  = rows.filter(r => r.type === 'income');
+  const totalSpent  = expenses.reduce((s, r) => s + r.total, 0);
+  const totalEarned = incomes.reduce((s, r) => s + r.total, 0);
+  const expenseCount = counts.find(c => c.type === 'expense')?.cnt || 0;
+  const incomeCount  = counts.find(c => c.type === 'income')?.cnt  || 0;
+
+  return {
+    ...(month ? { month } : {}),
+    totalSpent, totalEarned,
+    net: totalEarned - totalSpent,
+    expenses, incomes,
+    expenseCount, incomeCount,
+    txCount: expenseCount + incomeCount,
+  };
+}
+
 function getSummaryByMonth(month) {
   const rows = db.prepare(`
     SELECT type, category, SUM(amount) as total
@@ -234,20 +252,26 @@ function getSummaryByMonth(month) {
     GROUP BY type
   `).all(month);
 
-  const expenses = rows.filter(r => r.type === 'expense');
-  const incomes  = rows.filter(r => r.type === 'income');
-  const totalSpent  = expenses.reduce((s, r) => s + r.total, 0);
-  const totalEarned = incomes.reduce((s, r) => s + r.total, 0);
-  const expenseCount = counts.find(c => c.type === 'expense')?.cnt || 0;
-  const incomeCount  = counts.find(c => c.type === 'income')?.cnt  || 0;
+  return buildSummary(rows, counts, month);
+}
 
-  return {
-    month, totalSpent, totalEarned,
-    net: totalEarned - totalSpent,
-    expenses, incomes,
-    expenseCount, incomeCount,
-    txCount: expenseCount + incomeCount,
-  };
+function getSummaryOverall() {
+  const rows = db.prepare(`
+    SELECT type, category, SUM(amount) as total
+    FROM transactions
+    WHERE 1=1 ${SENTINEL_FILTER}
+    GROUP BY type, category
+    ORDER BY total DESC
+  `).all();
+
+  const counts = db.prepare(`
+    SELECT type, COUNT(*) as cnt
+    FROM transactions
+    WHERE 1=1 ${SENTINEL_FILTER}
+    GROUP BY type
+  `).all();
+
+  return buildSummary(rows, counts);
 }
 
 function getDailyTotals(month) {
@@ -567,6 +591,7 @@ module.exports = {
   deleteLastTransaction,
   getLastNTransactions,
   getSummaryByMonth,
+  getSummaryOverall,
   getDailyTotals,
   getMonthlyTrends,
   getCategoryTrends,
