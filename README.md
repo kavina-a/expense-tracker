@@ -88,7 +88,9 @@ ngrok http 3000
 ### Step 6 — Set environment variables
 
 ```env
-OPENAI_API_KEY=sk-...
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_VISION_MODEL=llama-3.2-90b-vision-preview
 WHATSAPP_TOKEN=your_permanent_system_user_token
 WHATSAPP_PHONE_ID=1234567890
 WHATSAPP_VERIFY_TOKEN=my_secret_verify_string
@@ -154,7 +156,7 @@ PORT=3000
 expense-tracker/
 ├── backend/
 │   ├── index.js        # Express server + webhook + REST API
-│   ├── parser.js       # OpenAI text + vision (receipt OCR) parsing
+│   ├── parser.js       # Groq text + vision (receipt OCR) parsing
 │   ├── db.js           # SQLite schema + all queries (better-sqlite3)
 │   ├── whatsapp.js     # Send messages + download media
 │   ├── summarizer.js   # Format WhatsApp reply strings
@@ -183,7 +185,7 @@ You can add, rename, and delete categories from the **Categories** page in the d
 |-------|-----------|
 | Backend | Node.js + Express |
 | Database | SQLite (better-sqlite3) |
-| AI Parsing | OpenAI gpt-4o-mini (text) + gpt-4o (receipt images) |
+| AI Parsing | Groq llama-3.3-70b (text) + llama-3.2-90b-vision (receipt images) |
 | WhatsApp | Meta Cloud API (Webhook) |
 | Frontend | React + Vite + Tailwind CSS |
 | Charts | Recharts |

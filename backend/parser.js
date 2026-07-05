@@ -2,14 +2,24 @@ const OpenAI = require('openai');
 require('dotenv').config();
 const { log, logError, preview } = require('./logger');
 
-// Railway/containers often fail with openai@4's default node-fetch client
-// ("Premature close"). Native fetch (undici) handles IPv4/IPv6 + chunked responses reliably.
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
+const GROQ_TEXT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'llama-3.2-90b-vision-preview';
+const MAX_OUTPUT_TOKENS = 512;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+// Groq is OpenAI-compatible; native fetch avoids Railway "Premature close" issues.
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: GROQ_BASE_URL,
   fetch: globalThis.fetch,
   maxRetries: 3,
   timeout: 60_000,
 });
+
+if (!process.env.GROQ_API_KEY) {
+  console.warn('[Parser] GROQ_API_KEY not set — message parsing will fail');
+}
 
 function buildSystemPrompt(categories) {
   const incomeCategories  = categories.filter(c => c.type === 'income').map(c => c.name).join(', ');
@@ -108,13 +118,20 @@ Today: ${today}
 Reply ONLY with valid JSON. No markdown, no explanation.`;
 }
 
+function extractJSON(raw) {
+  const trimmed = String(raw || '').trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
 function safeParseJSON(raw, kind) {
+  const cleaned = extractJSON(raw);
   try {
-    return JSON.parse(raw);
+    return JSON.parse(cleaned);
   } catch (err) {
     log('warn', 'Parser', 'json_parse_failed', {
       kind,
-      rawPreview: preview(raw, 200),
+      rawPreview: preview(cleaned, 200),
       parseError: err.message,
     });
     return { isQuery: true, queryType: 'unknown' };
@@ -123,19 +140,21 @@ function safeParseJSON(raw, kind) {
 
 async function callChatCompletion(kind, params, meta = {}) {
   const start = Date.now();
-  log('info', 'Parser', 'openai_request_start', {
+  log('info', 'Parser', 'llm_request_start', {
     kind,
+    provider: 'groq',
     model: params.model,
     maxTokens: params.max_tokens,
-    hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+    hasApiKey: Boolean(process.env.GROQ_API_KEY),
     ...meta,
   });
 
   try {
-    const completion = await openai.chat.completions.create(params);
+    const completion = await groq.chat.completions.create(params);
     const choice = completion.choices?.[0];
-    log('info', 'Parser', 'openai_request_ok', {
+    log('info', 'Parser', 'llm_request_ok', {
       kind,
+      provider: 'groq',
       model: params.model,
       durationMs: Date.now() - start,
       finishReason: choice?.finish_reason,
@@ -146,9 +165,10 @@ async function callChatCompletion(kind, params, meta = {}) {
   } catch (err) {
     logError('Parser', err, {
       kind,
+      provider: 'groq',
       model: params.model,
       durationMs: Date.now() - start,
-      hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+      hasApiKey: Boolean(process.env.GROQ_API_KEY),
       ...meta,
     });
     throw err;
@@ -157,19 +177,19 @@ async function callChatCompletion(kind, params, meta = {}) {
 
 async function parseTextMessage(text, categories) {
   const completion = await callChatCompletion('text', {
-    model: 'gpt-4o-mini',
+    model: GROQ_TEXT_MODEL,
     messages: [
       { role: 'system', content: buildSystemPrompt(categories) },
       { role: 'user',   content: text },
     ],
     response_format: { type: 'json_object' },
     temperature: 0,
-    max_tokens: 300,
+    max_tokens: MAX_OUTPUT_TOKENS,
   }, { inputPreview: preview(text) });
 
   const raw = completion.choices?.[0]?.message?.content;
   if (!raw) {
-    log('warn', 'Parser', 'openai_empty_response', { kind: 'text', inputPreview: preview(text) });
+    log('warn', 'Parser', 'llm_empty_response', { kind: 'text', inputPreview: preview(text) });
     return { isQuery: true, queryType: 'unknown' };
   }
   return safeParseJSON(raw, 'text');
@@ -177,8 +197,17 @@ async function parseTextMessage(text, categories) {
 
 async function parseImageMessage(imageBuffer, mimeType, categories) {
   const imageBytes = imageBuffer?.length || 0;
+  if (imageBytes > MAX_IMAGE_BYTES) {
+    log('warn', 'Parser', 'image_too_large', { imageBytes, maxBytes: MAX_IMAGE_BYTES });
+    return {
+      isQuery: false,
+      needsClarification: true,
+      question: 'That image is a bit too large for me — can you send a smaller screenshot or just type the amount?',
+    };
+  }
+
   const completion = await callChatCompletion('image', {
-    model: 'gpt-4o-mini',
+    model: GROQ_VISION_MODEL,
     messages: [
       {
         role: 'system',
@@ -191,7 +220,7 @@ async function parseImageMessage(imageBuffer, mimeType, categories) {
         content: [
           {
             type: 'image_url',
-            image_url: { url: `data:${mimeType};base64,${imageBuffer.toString('base64')}`, detail: 'low' },
+            image_url: { url: `data:${mimeType};base64,${imageBuffer.toString('base64')}` },
           },
           { type: 'text', text: 'Parse this receipt or payment screenshot as an expense transaction.' },
         ],
@@ -199,12 +228,12 @@ async function parseImageMessage(imageBuffer, mimeType, categories) {
     ],
     response_format: { type: 'json_object' },
     temperature: 0,
-    max_tokens: 300,
+    max_tokens: MAX_OUTPUT_TOKENS,
   }, { mimeType, imageBytes });
 
   const raw = completion.choices?.[0]?.message?.content;
   if (!raw) {
-    log('warn', 'Parser', 'openai_empty_response', { kind: 'image', mimeType, imageBytes });
+    log('warn', 'Parser', 'llm_empty_response', { kind: 'image', mimeType, imageBytes });
     return { isQuery: true, queryType: 'unknown' };
   }
   return safeParseJSON(raw, 'image');
