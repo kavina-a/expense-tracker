@@ -30,6 +30,8 @@ app.use(cors({
   credentials: true,
 }));
 
+const VALID_TYPES = ['income', 'expense', 'investment'];
+
 function thisMonthStr() { return new Date().toLocaleDateString('sv-SE').slice(0, 7); }
 
 function safeId(param) {
@@ -161,15 +163,16 @@ app.post('/telegram', async (req, res) => {
 // ─── REST API ─────────────────────────────────────────────────────────────────
 
 app.get('/api/transactions', apiHandler((req, res) => {
-  const { month, category, type } = req.query;
-  res.json(db.getTransactions({ month, category, type }));
+  const { month, category, type, limit } = req.query;
+  const parsedLimit = limit != null ? Math.min(Math.max(parseInt(limit, 10) || 0, 1), 100000) : undefined;
+  res.json(db.getTransactions({ month, category, type, limit: parsedLimit }));
 }));
 
 app.post('/api/transactions', apiHandler((req, res) => {
   const { amount, type, category, description, date } = req.body;
   const parsedAmount = parseFloat(amount);
   if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return res.status(400).json({ error: 'A positive amount is required' });
-  if (!type || !['income', 'expense'].includes(type)) return res.status(400).json({ error: 'type must be income or expense' });
+  if (!type || !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'type must be income, expense, or investment' });
   if (!category?.trim()) return res.status(400).json({ error: 'category is required' });
   const txDate = date || new Date().toLocaleDateString('sv-SE');
   const tx = db.insertTransaction({ amount: parsedAmount, type, category: category.trim(), description: description || null, date: txDate });
@@ -180,7 +183,7 @@ app.put('/api/transactions/:id', apiHandler((req, res) => {
   const id = safeId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const { amount, type, category, description, date } = req.body;
-  if (type && !['income', 'expense'].includes(type)) return res.status(400).json({ error: 'type must be income or expense' });
+  if (type && !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'type must be income, expense, or investment' });
   if (amount != null && (!Number.isFinite(parseFloat(amount)) || parseFloat(amount) <= 0)) return res.status(400).json({ error: 'A positive amount is required' });
   const tx = db.updateTransaction(id, { amount: amount ? parseFloat(amount) : undefined, type, category, description, date });
   tx ? res.json(tx) : res.status(404).json({ error: 'Not found' });
@@ -260,6 +263,7 @@ app.get('/api/categories', apiHandler((_req, res) => res.json(db.getCategories()
 app.post('/api/categories', apiHandler((req, res) => {
   const { name, icon, color, type } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+  if (type && !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'type must be income, expense, or investment' });
   try {
     res.status(201).json(db.insertCategory({ name: name.trim(), icon, color, type }));
   } catch {
@@ -270,6 +274,7 @@ app.post('/api/categories', apiHandler((req, res) => {
 app.put('/api/categories/:id', apiHandler((req, res) => {
   const id = safeId(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
+  if (req.body.type && !VALID_TYPES.includes(req.body.type)) return res.status(400).json({ error: 'type must be income, expense, or investment' });
   const cat = db.updateCategory(id, req.body);
   cat ? res.json(cat) : res.status(404).json({ error: 'Not found' });
 }));

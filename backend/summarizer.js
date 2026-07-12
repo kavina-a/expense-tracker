@@ -1,5 +1,5 @@
 function fmt(amount) {
-  return `Rs. ${Number(amount).toLocaleString('en-IN')}`;
+  return `LKR ${Number(amount).toLocaleString('en-US')}`;
 }
 
 function formatMonth(monthStr) {
@@ -20,11 +20,12 @@ function getCategoryIcon(name, categoriesMap) {
   return FALLBACKS[name] || '📌';
 }
 
-function formatSummary({ month, totalSpent, totalEarned, net, expenses, incomes }, iconsMap) {
+function formatSummary({ month, totalSpent, totalEarned, totalInvested, net, expenses, incomes, investments }, iconsMap) {
   const sign = net >= 0 ? '+' : '';
   let msg = `📊 ${formatMonth(month)}\n─────────────\n`;
   msg += `💸 Spent: ${fmt(totalSpent)}\n`;
   msg += `💰 Earned: ${fmt(totalEarned)}\n`;
+  if (totalInvested) msg += `📈 Invested: ${fmt(totalInvested)}\n`;
   msg += `📉 Net: ${sign}${fmt(net)}\n`;
 
   if (expenses.length) {
@@ -41,6 +42,13 @@ function formatSummary({ month, totalSpent, totalEarned, net, expenses, incomes 
       msg += `${icon} ${row.category} — ${fmt(row.total)}\n`;
     }
   }
+  if (investments?.length) {
+    msg += `\nInvestments:\n`;
+    for (const row of investments) {
+      const icon = getCategoryIcon(row.category, iconsMap);
+      msg += `${icon} ${row.category} — ${fmt(row.total)}\n`;
+    }
+  }
   return msg.trim();
 }
 
@@ -50,7 +58,7 @@ function formatTransactionList(transactions, title = '') {
   }
   let msg = title ? `${title}\n─────────────\n` : '';
   for (const t of transactions) {
-    const sign = t.type === 'income' ? '➕' : '➖';
+    const sign = t.type === 'income' ? '➕' : t.type === 'investment' ? '📈' : '➖';
     const label = t.description || t.category;
     msg += `${sign} ${t.date} · ${label} · ${fmt(t.amount)} (${t.category})\n`;
   }
@@ -58,7 +66,7 @@ function formatTransactionList(transactions, title = '') {
 }
 
 function formatConfirmation(transaction) {
-  const sign  = transaction.type === 'income' ? '✅ Income' : '✅ Expense';
+  const sign  = transaction.type === 'income' ? '✅ Income' : transaction.type === 'investment' ? '📈 Investment' : '✅ Expense';
   const label = transaction.description || transaction.category;
   return `${sign} logged!\n${label} — ${fmt(transaction.amount)}\n📂 ${transaction.category}\n📅 ${transaction.date}`;
 }
@@ -66,17 +74,23 @@ function formatConfirmation(transaction) {
 function formatComparison(m1, m2) {
   const spendDiff  = m2.totalSpent  - m1.totalSpent;
   const earnDiff   = m2.totalEarned - m1.totalEarned;
+  const investDiff = (m2.totalInvested || 0) - (m1.totalInvested || 0);
   const spendSign  = spendDiff >= 0 ? '+' : '';
   const earnSign   = earnDiff  >= 0 ? '+' : '';
+  const investSign = investDiff >= 0 ? '+' : '';
   const spendPct   = m1.totalSpent  ? `${((spendDiff / m1.totalSpent)  * 100).toFixed(1)}%` : '—';
   const earnPct    = m1.totalEarned ? `${((earnDiff  / m1.totalEarned) * 100).toFixed(1)}%` : '—';
+  const investPct  = m1.totalInvested ? `${((investDiff / m1.totalInvested) * 100).toFixed(1)}%` : '—';
 
-  return (
+  let msg =
     `📊 ${formatMonth(m1.month)} → ${formatMonth(m2.month)}\n─────────────\n` +
     `💸 Spent:  ${fmt(m1.totalSpent)}  →  ${fmt(m2.totalSpent)}  (${spendSign}${spendPct})\n` +
-    `💰 Earned: ${fmt(m1.totalEarned)} →  ${fmt(m2.totalEarned)} (${earnSign}${earnPct})\n` +
-    `📉 Net:    ${fmt(m1.net)} → ${fmt(m2.net)}`
-  );
+    `💰 Earned: ${fmt(m1.totalEarned)} →  ${fmt(m2.totalEarned)} (${earnSign}${earnPct})\n`;
+  if (m1.totalInvested || m2.totalInvested) {
+    msg += `📈 Invested: ${fmt(m1.totalInvested || 0)} → ${fmt(m2.totalInvested || 0)} (${investSign}${investPct})\n`;
+  }
+  msg += `📉 Net:    ${fmt(m1.net)} → ${fmt(m2.net)}`;
+  return msg;
 }
 
 function formatBudgetStatus(budgets) {

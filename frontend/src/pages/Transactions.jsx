@@ -35,10 +35,10 @@ function fmtDateLabel(dateStr) {
 }
 
 function fmtRs(n) {
-  return `Rs. ${Number(n).toLocaleString('en-IN')}`
+  return `LKR ${Number(n).toLocaleString('en-US')}`
 }
 
-function exportCSV(transactions, month) {
+function exportCSV(transactions, filenameLabel) {
   const header = 'Date,Type,Category,Description,Amount'
   const rows = transactions.map(t => {
     const desc = (t.description || '').replace(/"/g, '""')
@@ -49,7 +49,7 @@ function exportCSV(transactions, month) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `transactions-${month}.csv`
+  a.download = `transactions-${filenameLabel}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -58,6 +58,7 @@ const TABS = [
   { label: 'All',      value: '' },
   { label: 'Income',   value: 'income' },
   { label: 'Expenses', value: 'expense' },
+  { label: 'Invested', value: 'investment' },
 ]
 
 const SORT_OPTIONS = [
@@ -140,51 +141,58 @@ function EditModal({ tx, categories, onSave, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/30">
-      <div className="bg-white border-t sm:border border-border rounded-t-[20px] sm:rounded-hero w-full sm:max-w-md max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-white z-10">
-          <h2 className="font-medium text-neutral-800">Edit Transaction</h2>
+      <div className="bg-white border-t-2 sm:border-2 border-ink sm:shadow-brutal rounded-t-[20px] sm:rounded-hero w-full sm:max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b-2 border-ink sticky top-0 bg-white z-10">
+          <h2 className="font-bold text-ink">Edit Transaction</h2>
           <button onClick={onClose} className="text-warm-400 hover:text-terra p-1 rounded-item hover:bg-warm-100">
             <X size={16} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => setType('expense')}
-              className={`py-2.5 rounded-item text-sm font-medium border transition-all ${
-                type === 'expense' ? 'bg-terra/10 border-terra/30 text-terra' : 'border-border text-warm-500 hover:bg-warm-100'
+              className={`py-2.5 rounded-item text-sm font-bold border-2 transition-all ${
+                type === 'expense' ? 'bg-terra border-ink text-white shadow-brutal-xs' : 'border-ink text-warm-500 hover:bg-warm-100'
               }`}
             >Expense</button>
             <button
               type="button"
               onClick={() => setType('income')}
-              className={`py-2.5 rounded-item text-sm font-medium border transition-all ${
-                type === 'income' ? 'bg-sage/10 border-sage/30 text-sage' : 'border-border text-warm-500 hover:bg-warm-100'
+              className={`py-2.5 rounded-item text-sm font-bold border-2 transition-all ${
+                type === 'income' ? 'bg-sage border-ink text-white shadow-brutal-xs' : 'border-ink text-warm-500 hover:bg-warm-100'
               }`}
             >Income</button>
+            <button
+              type="button"
+              onClick={() => setType('investment')}
+              className={`py-2.5 rounded-item text-sm font-bold border-2 transition-all ${
+                type === 'investment' ? 'bg-invest border-ink text-white shadow-brutal-xs' : 'border-ink text-warm-500 hover:bg-warm-100'
+              }`}
+            >Invest</button>
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">AMOUNT (RS.)</label>
-            <input type="number" value={amount} onChange={e => setAmount(e.target.value)} className="w-full px-4 py-3 bg-cream border border-border rounded-item text-xl font-medium text-neutral-800 focus:outline-none focus:border-terra/40" min="0" step="any" />
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">AMOUNT (LKR)</label>
+            <input type="number" value={amount} onChange={e => setAmount(e.target.value)} className="w-full px-4 py-3 bg-cream border-2 border-ink rounded-item text-2xl font-bold text-ink uppercase tracking-tight focus:outline-none focus:border-terra" min="0" step="any" />
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">CATEGORY</label>
-            <select value={category} onChange={e => setCategory(e.target.value)} className="w-full px-3 py-2.5 bg-cream border border-border rounded-item text-sm text-neutral-700 focus:outline-none focus:border-terra/40">
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">CATEGORY</label>
+            <select value={category} onChange={e => setCategory(e.target.value)} className="w-full px-3 py-2.5 bg-cream border-2 border-ink rounded-item text-sm font-bold text-ink focus:outline-none focus:border-terra">
               {filtered.map(c => (<option key={c.id} value={c.name}>{c.icon} {c.name}</option>))}
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">NOTE</label>
-            <input type="text" value={description} onChange={e => setDesc(e.target.value)} placeholder="Optional note" className="w-full px-4 py-3 bg-cream border border-border rounded-item text-sm text-neutral-800 placeholder-warm-400 focus:outline-none focus:border-terra/40" />
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">NOTE</label>
+            <input type="text" value={description} onChange={e => setDesc(e.target.value)} placeholder="Optional note" className="w-full px-4 py-3 bg-cream border-2 border-ink rounded-item text-sm font-bold text-ink placeholder-warm-400 focus:outline-none focus:border-terra" />
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">DATE</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full px-4 py-3 bg-cream border border-border rounded-item text-sm text-neutral-800 focus:outline-none focus:border-terra/40" />
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">DATE</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full px-4 py-3 bg-cream border-2 border-ink rounded-item text-sm font-bold text-ink focus:outline-none focus:border-terra" />
           </div>
           <div className="flex gap-2 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-item text-sm text-warm-500 border border-border hover:bg-warm-100 transition-colors">Cancel</button>
-            <button type="submit" className="flex-1 py-2.5 rounded-item text-sm font-medium bg-terra hover:bg-terra-dark text-white transition-colors">Save</button>
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-item text-sm font-bold text-warm-600 border-2 border-ink hover:bg-warm-100 transition-colors">Cancel</button>
+            <button type="submit" className="flex-1 py-2.5 rounded-item text-sm font-bold uppercase tracking-wide bg-terra hover:bg-terra-dark text-white transition-all border-2 border-ink shadow-brutal-sm hover:shadow-none hover:translate-x-[3px] hover:translate-y-[3px]">Save</button>
           </div>
         </form>
       </div>
@@ -203,26 +211,26 @@ function TxRow({ tx, cat, onDelete, onEdit, isConfirming, onConfirm, onCancel, s
         </button>
       )}
       <div
-        className="w-10 h-10 rounded-item flex items-center justify-center text-lg shrink-0 cursor-pointer"
-        style={{ backgroundColor: (cat.color || '#525252') + '15' }}
+        className="w-10 h-10 rounded-item flex items-center justify-center text-lg shrink-0 cursor-pointer border-2 border-ink"
+        style={{ backgroundColor: cat.color || '#525252' }}
         onClick={() => onEdit(tx)}
       >
         {cat.icon || '📦'}
       </div>
       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => onEdit(tx)}>
-        <p className="text-sm font-medium text-neutral-800 truncate">{tx.category}</p>
+        <p className="text-sm font-bold text-ink truncate">{tx.category}</p>
         {tx.description && <p className="text-[11px] text-warm-500 truncate mt-0.5">{tx.description}</p>}
         <p className="text-[10px] text-warm-400 mt-0.5">{fmtDateLabel(tx.date)} · {tx.date}</p>
       </div>
       <div className="text-right shrink-0">
-        <span className={`text-sm font-medium tabular-nums ${tx.type === 'income' ? 'text-sage' : 'text-terra'}`}>
+        <span className={`text-sm font-bold tabular-nums ${tx.type === 'income' ? 'text-sage-dark' : tx.type === 'investment' ? 'text-invest' : 'text-terra'}`}>
           {tx.type === 'income' ? '+' : '−'}{fmtRs(tx.amount)}
         </span>
       </div>
       <div className="w-14 flex justify-end shrink-0">
         {isConfirming ? (
           <div className="flex items-center gap-1.5">
-            <button onClick={onConfirm} className="text-[11px] text-terra font-medium hover:underline">Yes</button>
+            <button onClick={onConfirm} className="text-[11px] text-terra font-bold hover:underline">Yes</button>
             <button onClick={onCancel} className="text-warm-400 hover:text-warm-600"><X size={12} /></button>
           </div>
         ) : (
@@ -241,18 +249,19 @@ function TxRow({ tx, cat, onDelete, onEdit, isConfirming, onConfirm, onCancel, s
 // ─── Date group ───────────────────────────────────────────────────────────────
 
 function DateGroup({ date, txs, catMap, deleting, setDeleting, deleteMut, onEdit, selectable, selected, onSelect }) {
-  const dayIncome  = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const dayExpense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-  const dayNet     = dayIncome - dayExpense
+  const dayIncome     = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
+  const dayExpense    = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+  const dayInvestment = txs.filter(t => t.type === 'investment').reduce((s, t) => s + t.amount, 0)
+  const dayNet     = dayIncome - dayExpense - dayInvestment
 
   return (
     <div>
       <div className="flex items-center justify-between px-5 py-2.5 bg-cream border-b border-border/60">
-        <span className="text-[11px] font-medium text-warm-500 tracking-wide">
+        <span className="text-[11px] font-bold text-warm-600 tracking-wide">
           {fmtDateLabel(date).toUpperCase()}
           <span className="text-warm-400 font-normal ml-2 normal-case tracking-normal">{date}</span>
         </span>
-        <span className={`text-[11px] font-medium tabular-nums ${dayNet >= 0 ? 'text-sage' : 'text-terra'}`}>
+        <span className={`text-[11px] font-bold tabular-nums ${dayNet >= 0 ? 'text-sage-dark' : 'text-terra'}`}>
           {dayNet >= 0 ? '+' : '−'}{fmtRs(Math.abs(dayNet))}
         </span>
       </div>
@@ -290,6 +299,7 @@ export default function Transactions() {
   const [editing,  setEditing]  = useState(null)
   const [selectable, setSelectable] = useState(false)
   const [selected, setSelected] = useState(new Set())
+  const [exporting, setExporting] = useState(false)
 
   const qc = useQueryClient()
 
@@ -349,9 +359,10 @@ export default function Transactions() {
     return result
   }, [all, search, sort])
 
-  const totalIncome  = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
-  const totalExpense = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-  const net          = totalIncome - totalExpense
+  const totalIncome     = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
+  const totalExpense    = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+  const totalInvestment = filtered.filter(t => t.type === 'investment').reduce((s, t) => s + t.amount, 0)
+  const net          = totalIncome - totalExpense - totalInvestment
 
   const groups = useMemo(() => {
     const map = {}
@@ -383,43 +394,58 @@ export default function Transactions() {
     else setSelected(new Set(filtered.map(t => t.id)))
   }
 
+  async function handleExportAll() {
+    setExporting(true)
+    try {
+      const everything = await getTransactions({ limit: 100000 })
+      const sorted = [...everything].sort((a, b) =>
+        a.date.localeCompare(b.date) || (a.created_at || '').localeCompare(b.created_at || '')
+      )
+      exportCSV(sorted, `all-${new Date().toISOString().slice(0, 10)}`)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="p-5 md:p-8 max-w-3xl mx-auto md:mx-0">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
         <div>
-          <h1 className="text-xl font-medium text-neutral-800">Transaction History</h1>
-          <p className="text-[11px] text-warm-500 tracking-wide mt-1">
+          <h1 className="text-2xl font-bold text-ink uppercase tracking-tight">Transaction History</h1>
+          <p className="text-[11px] font-bold text-warm-600 tracking-wide mt-1">
             {filtered.length} ENTRIES · {fmtMonthLabel(month).toUpperCase()}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setSelectable(s => !s); setSelected(new Set()) }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-item text-[11px] font-medium border transition-colors tracking-wide ${
-              selectable ? 'bg-terra/10 border-terra/30 text-terra' : 'text-warm-600 border-border hover:border-terra/30 hover:text-terra'
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-item text-[11px] font-bold border-2 transition-colors tracking-wide ${
+              selectable ? 'bg-terra border-ink text-white shadow-brutal-xs' : 'text-warm-600 border-ink hover:border-terra hover:text-terra'
             }`}
           >
             <CheckSquare size={12} />
             SELECT
           </button>
           <button
-            onClick={() => exportCSV(filtered, month)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-item text-[11px] font-medium text-warm-600 border border-border hover:border-terra/30 hover:text-terra transition-colors tracking-wide"
+            onClick={handleExportAll}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-item text-[11px] font-bold text-warm-600 border-2 border-ink hover:border-terra hover:text-terra transition-colors tracking-wide disabled:opacity-50"
+            title="Download a CSV of every transaction you've ever logged"
           >
             <Download size={12} />
-            CSV
+            {exporting ? 'Exporting…' : 'CSV (All)'}
           </button>
         </div>
       </div>
 
       {/* Bulk actions bar */}
       {selectable && selected.size > 0 && (
-        <div className="flex items-center gap-2 mb-4 p-3 bg-terra/5 border border-terra/20 rounded-item">
-          <button onClick={toggleSelectAll} className="text-[11px] font-medium text-terra hover:underline">
+        <div className="flex items-center gap-2 mb-4 p-3 bg-amber border-2 border-ink shadow-brutal-sm rounded-item">
+          <button onClick={toggleSelectAll} className="text-[11px] font-bold text-ink hover:underline">
             {selected.size === filtered.length ? 'Deselect all' : 'Select all'}
           </button>
-          <span className="text-[11px] text-warm-500">{selected.size} selected</span>
+          <span className="text-[11px] font-bold text-ink/70">{selected.size} selected</span>
           <div className="flex-1" />
           <select
             onChange={e => {
@@ -428,14 +454,14 @@ export default function Transactions() {
                 e.target.value = ''
               }
             }}
-            className="px-2 py-1.5 bg-white border border-border rounded-item text-[11px] text-neutral-700 focus:outline-none"
+            className="px-2 py-1.5 bg-white border-2 border-ink rounded-item text-[11px] font-bold text-ink focus:outline-none"
           >
             <option value="">Recategorize…</option>
             {categories.map(c => (<option key={c.id} value={c.name}>{c.icon} {c.name}</option>))}
           </select>
           <button
             onClick={() => bulkDeleteMut.mutate([...selected])}
-            className="px-3 py-1.5 rounded-item text-[11px] font-medium bg-terra text-white hover:bg-terra-dark transition-colors"
+            className="px-3 py-1.5 rounded-item text-[11px] font-bold bg-terra text-white border-2 border-ink hover:bg-terra-dark transition-colors"
           >
             Delete ({selected.size})
           </button>
@@ -443,18 +469,22 @@ export default function Transactions() {
       )}
 
       {/* Summary chips */}
-      <div className="flex gap-3 mb-5">
-        <div className="flex-1 bg-white rounded-card border border-border p-4">
-          <p className="text-[11px] text-warm-500 tracking-wide mb-1">INCOME</p>
-          <p className="text-lg font-medium text-sage">+{fmtRs(totalIncome)}</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div className="bg-white rounded-card border-2 border-ink shadow-brutal-sm p-4">
+          <p className="text-[11px] font-bold text-warm-600 tracking-wide mb-1">INCOME</p>
+          <p className="text-lg font-bold text-sage-dark">+{fmtRs(totalIncome)}</p>
         </div>
-        <div className="flex-1 bg-white rounded-card border border-border p-4">
-          <p className="text-[11px] text-warm-500 tracking-wide mb-1">EXPENSES</p>
-          <p className="text-lg font-medium text-terra">{fmtRs(totalExpense)}</p>
+        <div className="bg-white rounded-card border-2 border-ink shadow-brutal-sm p-4">
+          <p className="text-[11px] font-bold text-warm-600 tracking-wide mb-1">EXPENSES</p>
+          <p className="text-lg font-bold text-terra">{fmtRs(totalExpense)}</p>
         </div>
-        <div className="flex-1 bg-white rounded-card border border-border p-4">
-          <p className="text-[11px] text-warm-500 tracking-wide mb-1">NET</p>
-          <p className={`text-lg font-medium ${net >= 0 ? 'text-sage' : 'text-terra'}`}>
+        <div className="bg-white rounded-card border-2 border-ink shadow-brutal-sm p-4">
+          <p className="text-[11px] font-bold text-warm-600 tracking-wide mb-1">INVESTED</p>
+          <p className="text-lg font-bold text-invest">{totalInvestment > 0 ? fmtRs(totalInvestment) : '—'}</p>
+        </div>
+        <div className="bg-white rounded-card border-2 border-ink shadow-brutal-sm p-4">
+          <p className="text-[11px] font-bold text-warm-600 tracking-wide mb-1">NET</p>
+          <p className={`text-lg font-bold ${net >= 0 ? 'text-sage-dark' : 'text-terra'}`}>
             {net >= 0 ? '+' : '−'}{fmtRs(Math.abs(net))}
           </p>
         </div>
@@ -462,41 +492,41 @@ export default function Transactions() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap gap-2 mb-4">
-        <div className="flex items-center gap-1 px-3 py-2 bg-white border border-border rounded-item">
+        <div className="flex items-center gap-1 px-3 py-2 bg-white border-2 border-ink rounded-item">
           <button onClick={() => setMonth(m => shiftMonth(m, -1))} className="text-warm-500 hover:text-terra p-0.5"><ChevronLeft size={14} /></button>
-          <span className="text-xs text-neutral-700 min-w-[110px] text-center font-medium">{fmtMonthLabel(month)}</span>
+          <span className="text-xs text-ink min-w-[110px] text-center font-bold">{fmtMonthLabel(month)}</span>
           <button onClick={() => setMonth(m => shiftMonth(m, 1))} disabled={isCurrentMonth} className="text-warm-500 hover:text-terra disabled:opacity-30 p-0.5"><ChevronRight size={14} /></button>
         </div>
-        <div className="flex items-center bg-white border border-border rounded-item overflow-hidden">
+        <div className="flex items-center bg-white border-2 border-ink rounded-item overflow-hidden">
           {TABS.map(t => (
             <button
               key={t.value}
               onClick={() => { setTab(t.value); setCategory('') }}
-              className={`px-3 py-2 text-xs font-medium transition-colors ${
-                tab === t.value ? 'bg-terra/10 text-terra' : 'text-warm-500 hover:text-terra hover:bg-warm-100'
+              className={`px-3 py-2 text-xs font-bold transition-colors ${
+                tab === t.value ? 'bg-terra text-white' : 'text-warm-500 hover:text-terra hover:bg-warm-100'
               }`}
             >{t.label}</button>
           ))}
         </div>
-        <select value={category} onChange={e => setCategory(e.target.value)} className="px-3 py-2 bg-white border border-border rounded-item text-xs text-neutral-700 focus:outline-none focus:border-terra/40">
+        <select value={category} onChange={e => setCategory(e.target.value)} className="px-3 py-2 bg-white border-2 border-ink rounded-item text-xs font-bold text-ink focus:outline-none">
           <option value="">All categories</option>
           {filteredCatOptions.map(c => (<option key={c.id} value={c.name}>{c.icon} {c.name}</option>))}
         </select>
-        <div className="flex items-center gap-1 px-3 py-2 bg-white border border-border rounded-item">
+        <div className="flex items-center gap-1 px-3 py-2 bg-white border-2 border-ink rounded-item">
           <ArrowUpDown size={11} className="text-warm-400" />
-          <select value={sort} onChange={e => setSort(e.target.value)} className="bg-transparent text-xs text-neutral-700 focus:outline-none">
+          <select value={sort} onChange={e => setSort(e.target.value)} className="bg-transparent text-xs font-bold text-ink focus:outline-none">
             {SORT_OPTIONS.map(o => (<option key={o.value} value={o.value}>{o.label}</option>))}
           </select>
         </div>
-        <div className="flex items-center gap-2 px-3 py-2 bg-white border border-border rounded-item flex-1 min-w-[140px]">
+        <div className="flex items-center gap-2 px-3 py-2 bg-white border-2 border-ink rounded-item flex-1 min-w-[140px]">
           <Search size={12} className="text-warm-400 shrink-0" />
-          <input type="text" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} className="bg-transparent text-xs text-neutral-700 placeholder-warm-400 focus:outline-none w-full" />
+          <input type="text" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} className="bg-transparent text-xs text-ink placeholder-warm-400 focus:outline-none w-full" />
           {search && <button onClick={() => setSearch('')} className="text-warm-400 hover:text-warm-600"><X size={11} /></button>}
         </div>
       </div>
 
       {/* Transaction list */}
-      <div className="bg-white rounded-hero border border-border overflow-hidden">
+      <div className="bg-white rounded-hero border-2 border-ink shadow-brutal overflow-hidden">
         {txQuery.isLoading ? (
           <div className="flex items-center justify-center py-16 text-warm-500 text-sm">Loading…</div>
         ) : groups.length === 0 ? (
@@ -505,7 +535,7 @@ export default function Transactions() {
             <p className="text-sm text-warm-500">No transactions for {fmtMonthLabel(month)}</p>
             {tab && (
               <p className="text-[11px] text-warm-400">
-                No {tab === 'income' ? 'income' : 'expenses'} found.{' '}
+                No {tab === 'income' ? 'income' : tab === 'investment' ? 'investments' : 'expenses'} found.{' '}
                 <button onClick={() => setTab('')} className="text-terra hover:underline">View all</button>
               </p>
             )}
@@ -531,11 +561,12 @@ export default function Transactions() {
 
       {/* Footer */}
       {groups.length > 0 && (
-        <div className="flex items-center justify-between mt-3 px-1 text-[11px] text-warm-500 tracking-wide">
+        <div className="flex items-center justify-between mt-3 px-1 text-[11px] font-bold text-warm-600 tracking-wide">
           <span>{filtered.length} TRANSACTIONS</span>
           <div className="flex items-center gap-4">
-            <span>In: <span className="text-sage font-medium">{fmtRs(totalIncome)}</span></span>
-            <span>Out: <span className="text-terra font-medium">{fmtRs(totalExpense)}</span></span>
+            <span>In: <span className="text-sage-dark font-bold">{fmtRs(totalIncome)}</span></span>
+            <span>Out: <span className="text-terra font-bold">{fmtRs(totalExpense)}</span></span>
+            {totalInvestment > 0 && <span>Invested: <span className="text-invest font-bold">{fmtRs(totalInvestment)}</span></span>}
           </div>
         </div>
       )}

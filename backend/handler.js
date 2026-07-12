@@ -172,7 +172,7 @@ async function handleQuery(parsed, today, thisMonth, sender, channel) {
         const total = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
         await sender.sendText(
           formatTransactionList(txs, `📅 This Week`) +
-          `\n\n💸 Total spent: Rs. ${total.toLocaleString('en-IN')}`
+          `\n\n💸 Total spent: LKR ${total.toLocaleString('en-US')}`
         );
         break;
       }
@@ -187,7 +187,7 @@ async function handleQuery(parsed, today, thisMonth, sender, channel) {
         if (deleted) {
           const label = deleted.description || deleted.category;
           await sender.sendText(
-            `🗑️ Deleted: ${label} — Rs. ${deleted.amount.toLocaleString('en-IN')} (${deleted.date})`
+            `🗑️ Deleted: ${label} — LKR ${deleted.amount.toLocaleString('en-US')} (${deleted.date})`
           );
         } else {
           await sender.sendText('No transactions to delete.');
@@ -204,7 +204,7 @@ async function handleQuery(parsed, today, thisMonth, sender, channel) {
         const total = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
         await sender.sendText(
           formatTransactionList(txs, `📂 ${cat} — ${thisMonth}`) +
-          `\n\n💸 Total: Rs. ${total.toLocaleString('en-IN')}`
+          `\n\n💸 Total: LKR ${total.toLocaleString('en-US')}`
         );
         break;
       }
@@ -227,7 +227,7 @@ async function handleQuery(parsed, today, thisMonth, sender, channel) {
         const limit = parseFloat(parsed.budgetLimit);
         if (parsed.budgetCategory && limit > 0) {
           db.upsertBudget(parsed.budgetCategory, limit);
-          await sender.sendText(`✅ Budget set!\n${parsed.budgetCategory} → Rs. ${limit.toLocaleString('en-IN')}/month`);
+          await sender.sendText(`✅ Budget set!\n${parsed.budgetCategory} → LKR ${limit.toLocaleString('en-US')}/month`);
         } else {
           await sender.sendText('Try: budget food 5000');
         }

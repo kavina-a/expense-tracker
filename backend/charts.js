@@ -41,7 +41,7 @@ function buildCategoryChartConfig(summaryData) {
 
   const labels = expenses.map(e => {
     const k = (e.total / 1000).toFixed(1);
-    return `${e.category}  Rs.${k}k`;
+    return `${e.category}  LKR ${k}k`;
   });
 
   return {
@@ -62,7 +62,7 @@ function buildCategoryChartConfig(summaryData) {
           display: true,
           text: [
             `📊  ${monthLabel}`,
-            `Spent Rs.${fmtK(totalSpent)}  ·  Earned Rs.${fmtK(totalEarned)}  ·  Net ${netSign}Rs.${fmtK(net)}`,
+            `Spent LKR ${fmtK(totalSpent)}  ·  Earned LKR ${fmtK(totalEarned)}  ·  Net ${netSign}LKR ${fmtK(net)}`,
           ],
           color: '#e2e8f0',
           font: { size: 13, weight: 'bold' },
@@ -88,7 +88,7 @@ function buildCategoryChartConfig(summaryData) {
 function buildTrendChartConfig(trends) {
   const map = {};
   for (const r of trends) {
-    if (!map[r.month]) map[r.month] = { income: 0, expense: 0 };
+    if (!map[r.month]) map[r.month] = { income: 0, expense: 0, investment: 0 };
     map[r.month][r.type] += r.total;
   }
   const months = Object.keys(map).sort();
@@ -112,6 +112,14 @@ function buildTrendChartConfig(trends) {
           data:            months.map(m => map[m].expense),
           backgroundColor: '#ef444499',
           borderColor:     '#ef4444',
+          borderWidth:     1,
+          borderRadius:    4,
+        },
+        {
+          label:           'Invested',
+          data:            months.map(m => map[m].investment),
+          backgroundColor: '#f59e0b99',
+          borderColor:     '#f59e0b',
           borderWidth:     1,
           borderRadius:    4,
         },
@@ -154,7 +162,7 @@ function buildTrendChartConfig(trends) {
 function buildDailyChartConfig(dailyData, month) {
   const map = {};
   for (const r of dailyData) {
-    if (!map[r.date]) map[r.date] = { expense: 0, income: 0 };
+    if (!map[r.date]) map[r.date] = { expense: 0, income: 0, investment: 0 };
     map[r.date][r.type] += r.total;
   }
   const dates  = Object.keys(map).sort();
@@ -179,6 +187,14 @@ function buildDailyChartConfig(dailyData, month) {
           data:            dates.map(d => map[d].income),
           backgroundColor: '#22c55e99',
           borderColor:     '#22c55e',
+          borderWidth:     1,
+          borderRadius:    3,
+        },
+        {
+          label:           'Invested',
+          data:            dates.map(d => map[d].investment),
+          backgroundColor: '#f59e0b99',
+          borderColor:     '#f59e0b',
           borderWidth:     1,
           borderRadius:    3,
         },
@@ -282,7 +298,7 @@ function fmtK(n) {
   const abs = Math.abs(n);
   return abs >= 1000
     ? `${(abs / 1000).toFixed(1)}k`
-    : abs.toLocaleString('en-IN');
+    : abs.toLocaleString('en-US');
 }
 
 module.exports = {

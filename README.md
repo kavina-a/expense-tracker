@@ -105,10 +105,10 @@ PORT=3000
 ### Logging transactions
 | Message | What it does |
 |---------|-------------|
-| `450 lunch` | Expense · Rs. 450 · Food |
-| `spent 1200 on petrol` | Expense · Rs. 1200 · Transport |
-| `800 groceries keells` | Expense · Rs. 800 · Groceries |
-| `received 5000 tuition fee` | Income · Rs. 5000 · Tutoring Income |
+| `450 lunch` | Expense · LKR 450 · Food |
+| `spent 1200 on petrol` | Expense · LKR 1200 · Transport |
+| `800 groceries keells` | Expense · LKR 800 · Groceries |
+| `received 5000 tuition fee` | Income · LKR 5000 · Tutoring Income |
 | *(send a receipt photo)* | Receipt OCR — auto-parsed as expense |
 
 ### Queries
@@ -133,7 +133,7 @@ PORT=3000
 ### Budget management
 | Message | What it does |
 |---------|-------------|
-| `budget food 5000` | Set Rs. 5000/month Food limit |
+| `budget food 5000` | Set LKR 5000/month Food limit |
 | `budgets` | Show all limits + current spend with progress bars |
 | `delete last` | Delete most recent transaction (with confirmation) |
 

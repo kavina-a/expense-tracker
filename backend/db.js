@@ -111,9 +111,10 @@ const DEFAULT_CATEGORIES = [
   { name: 'Data Card',              icon: '📱', color: '#D4D4D4', type: 'expense' },
   { name: 'Gym',                    icon: '🏋️', color: '#0A0A0A', type: 'expense' },
   { name: 'Uber to/from class',     icon: '🚌', color: '#404040', type: 'expense' },
-  { name: 'Stocks',                 icon: '📊', color: '#525252', type: 'expense' },
   { name: 'Dates',                  icon: '💑', color: '#737373', type: 'expense' },
   { name: 'Drinking',               icon: '🍺', color: '#8A8A8A', type: 'expense' },
+  // ── Investment ──────────────────────────────────────────────────────────────
+  { name: 'Stocks',                 icon: '📊', color: '#8A6D3B', type: 'investment' },
   // ── Catch-all ────────────────────────────────────────────────────────────────
   { name: 'Other',                  icon: '📦', color: '#525252', type: 'expense' },
 ];
@@ -129,8 +130,8 @@ function seedCategories() {
   db.transaction(() => {
     for (const cat of DEFAULT_CATEGORIES) {
       insert.run(cat.name, cat.icon, cat.color, cat.type, now);
-      // Backfill type for already-existing categories
-      if (cat.type === 'income') updateType.run('income', cat.name);
+      // Backfill type for already-existing categories (metadata only — never touches transactions)
+      if (cat.type === 'income' || cat.type === 'investment') updateType.run(cat.type, cat.name);
     }
   })();
 }
@@ -219,20 +220,23 @@ function getLastNTransactions(n = 5) {
 }
 
 function buildSummary(rows, counts, month = null) {
-  const expenses = rows.filter(r => r.type === 'expense');
-  const incomes  = rows.filter(r => r.type === 'income');
-  const totalSpent  = expenses.reduce((s, r) => s + r.total, 0);
-  const totalEarned = incomes.reduce((s, r) => s + r.total, 0);
-  const expenseCount = counts.find(c => c.type === 'expense')?.cnt || 0;
-  const incomeCount  = counts.find(c => c.type === 'income')?.cnt  || 0;
+  const expenses    = rows.filter(r => r.type === 'expense');
+  const incomes     = rows.filter(r => r.type === 'income');
+  const investments = rows.filter(r => r.type === 'investment');
+  const totalSpent    = expenses.reduce((s, r) => s + r.total, 0);
+  const totalEarned   = incomes.reduce((s, r) => s + r.total, 0);
+  const totalInvested = investments.reduce((s, r) => s + r.total, 0);
+  const expenseCount    = counts.find(c => c.type === 'expense')?.cnt    || 0;
+  const incomeCount     = counts.find(c => c.type === 'income')?.cnt     || 0;
+  const investmentCount = counts.find(c => c.type === 'investment')?.cnt || 0;
 
   return {
     ...(month ? { month } : {}),
-    totalSpent, totalEarned,
-    net: totalEarned - totalSpent,
-    expenses, incomes,
-    expenseCount, incomeCount,
-    txCount: expenseCount + incomeCount,
+    totalSpent, totalEarned, totalInvested,
+    net: totalEarned - totalSpent - totalInvested,
+    expenses, incomes, investments,
+    expenseCount, incomeCount, investmentCount,
+    txCount: expenseCount + incomeCount + investmentCount,
   };
 }
 
@@ -467,27 +471,27 @@ function getYearlyOverview(year) {
   // Build 12-month array
   const months = Array.from({ length: 12 }, (_, i) => {
     const m = `${year}-${String(i + 1).padStart(2, '0')}`;
-    const income  = monthlyRows.find(r => r.month === m && r.type === 'income')?.total  || 0;
-    const expense = monthlyRows.find(r => r.month === m && r.type === 'expense')?.total || 0;
-    return { month: m, income, expense, net: income - expense };
+    const income     = monthlyRows.find(r => r.month === m && r.type === 'income')?.total     || 0;
+    const expense    = monthlyRows.find(r => r.month === m && r.type === 'expense')?.total    || 0;
+    const investment = monthlyRows.find(r => r.month === m && r.type === 'investment')?.total || 0;
+    return { month: m, income, expense, investment, net: income - expense - investment };
   });
 
-  const totalIncome  = months.reduce((s, m) => s + m.income,  0);
-  const totalExpense = months.reduce((s, m) => s + m.expense, 0);
-  const savingsRate  = totalIncome > 0 ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0;
+  const totalIncome     = months.reduce((s, m) => s + m.income,     0);
+  const totalExpense    = months.reduce((s, m) => s + m.expense,    0);
+  const totalInvestment = months.reduce((s, m) => s + m.investment, 0);
+  const savingsRate     = totalIncome > 0 ? ((totalIncome - totalExpense - totalInvestment) / totalIncome) * 100 : 0;
+  const investmentRate  = totalIncome > 0 ? (totalInvestment / totalIncome) * 100 : 0;
 
   // Per-category arrays (12 values each)
-  const incomeMap  = {};
-  const expenseMap = {};
+  const incomeMap     = {};
+  const expenseMap    = {};
+  const investmentMap = {};
   for (const row of categoryRows) {
     const idx = parseInt(row.month.split('-')[1]) - 1;
-    if (row.type === 'income') {
-      if (!incomeMap[row.category])  incomeMap[row.category]  = Array(12).fill(0);
-      incomeMap[row.category][idx]  += row.total;
-    } else {
-      if (!expenseMap[row.category]) expenseMap[row.category] = Array(12).fill(0);
-      expenseMap[row.category][idx] += row.total;
-    }
+    const map = row.type === 'income' ? incomeMap : row.type === 'investment' ? investmentMap : expenseMap;
+    if (!map[row.category]) map[row.category] = Array(12).fill(0);
+    map[row.category][idx] += row.total;
   }
 
   const toList = (map) =>
@@ -500,10 +504,13 @@ function getYearlyOverview(year) {
     months,
     totalIncome,
     totalExpense,
-    net: totalIncome - totalExpense,
+    totalInvestment,
+    net: totalIncome - totalExpense - totalInvestment,
     savingsRate,
-    incomeByCategory:  toList(incomeMap),
-    expenseByCategory: toList(expenseMap),
+    investmentRate,
+    incomeByCategory:      toList(incomeMap),
+    expenseByCategory:     toList(expenseMap),
+    investmentByCategory:  toList(investmentMap),
   };
 }
 

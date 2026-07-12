@@ -35,15 +35,15 @@ function SidebarLink({ to, label, Icon, collapsed }) {
       end={to === '/'}
       className={({ isActive }) =>
         [
-          'flex items-center gap-3 px-3 py-2.5 rounded-item text-sm font-medium transition-all',
+          'flex items-center gap-3 px-3 py-2.5 rounded-item text-sm font-bold transition-all border-2',
           isActive
-            ? 'bg-terra/10 text-terra border border-terra/20'
-            : 'text-warm-600 hover:text-terra hover:bg-warm-200/60',
+            ? 'bg-terra text-white border-ink shadow-brutal-xs'
+            : 'text-warm-600 border-transparent hover:text-terra hover:bg-warm-100 hover:border-ink',
           collapsed ? 'justify-center' : '',
         ].join(' ')
       }
     >
-      <Icon size={18} strokeWidth={1.8} />
+      <Icon size={18} strokeWidth={2.2} />
       {!collapsed && <span>{label}</span>}
     </NavLink>
   )
@@ -62,16 +62,16 @@ function BottomTab({ to, label, icon: Icon, center }) {
       }
     >
       {({ isActive }) => center ? (
-        <div className="flex flex-col items-center -mt-4">
-          <div className="w-12 h-12 rounded-full bg-terra flex items-center justify-center shadow-sm">
-            <Icon size={22} strokeWidth={2} className="text-white" />
+        <div className="flex flex-col items-center -mt-5">
+          <div className="w-[52px] h-[52px] rounded-full bg-terra border-2 border-ink shadow-brutal-sm flex items-center justify-center">
+            <Icon size={24} strokeWidth={2.5} className="text-white" />
           </div>
-          <span className="text-[10px] font-medium tracking-wide text-terra mt-0.5">{label}</span>
+          <span className="text-[10px] font-bold tracking-wide text-ink mt-1">{label}</span>
         </div>
       ) : (
         <>
-          <Icon size={20} strokeWidth={isActive ? 2 : 1.5} />
-          <span className={`text-[10px] tracking-wide ${isActive ? 'font-medium' : 'font-normal'}`}>{label}</span>
+          <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
+          <span className={`text-[10px] tracking-wide ${isActive ? 'font-bold' : 'font-medium'}`}>{label}</span>
         </>
       )}
     </NavLink>
@@ -84,25 +84,20 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-cream">
       {/* Desktop sidebar */}
-      <aside className={`hidden md:flex flex-col shrink-0 border-r border-border bg-white sticky top-0 h-screen transition-all duration-200 ${
+      <aside className={`hidden md:flex flex-col shrink-0 border-r-2 border-ink bg-white sticky top-0 h-screen transition-all duration-200 ${
         collapsed ? 'w-16' : 'w-56'
       }`}>
-        <div className={`flex items-center border-b border-border ${collapsed ? 'px-3 py-4 justify-center' : 'px-5 py-5'}`}>
+        <div className={`flex items-center border-b-2 border-ink ${collapsed ? 'px-3 py-4 justify-center' : 'px-5 py-5'}`}>
           {!collapsed && (
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-item bg-terra flex items-center justify-center">
-                  <span className="text-white text-sm font-medium">₹</span>
-                </div>
-                <span className="font-medium text-sm text-neutral-800">Money Tracker</span>
+                <img src="/icon-192.png" alt="Money Tracker" className="w-9 h-9 rounded-item object-cover border-2 border-ink" />
+                <span className="font-bold text-sm text-ink">Money Tracker</span>
               </div>
-              <p className="text-[11px] text-warm-500 mt-1 tracking-wide">PERSONAL · TELEGRAM</p>
             </div>
           )}
           {collapsed && (
-            <div className="w-8 h-8 rounded-item bg-terra flex items-center justify-center">
-              <span className="text-white text-sm font-medium">₹</span>
-            </div>
+            <img src="/icon-192.png" alt="Money Tracker" className="w-9 h-9 rounded-item object-cover border-2 border-ink" />
           )}
         </div>
 
@@ -112,9 +107,9 @@ export default function App() {
           ))}
         </nav>
 
-        <div className={`border-t border-border ${collapsed ? 'p-2' : 'px-4 py-4 space-y-3'}`}>
+        <div className={`border-t-2 border-ink ${collapsed ? 'p-2' : 'px-4 py-4 space-y-3'}`}>
           {!collapsed && (
-            <a href="/api/backup" download className="flex items-center gap-2 text-[11px] text-warm-500 hover:text-terra transition-colors tracking-wide">
+            <a href="/api/backup" download className="flex items-center gap-2 text-[11px] font-bold text-warm-600 hover:text-terra transition-colors tracking-wide">
               <Download size={12} /> Backup data
             </a>
           )}
@@ -140,7 +135,7 @@ export default function App() {
       </main>
 
       {/* Mobile bottom tab bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-border flex items-end">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t-2 border-ink flex items-end">
         <div className="flex w-full px-1 pb-1 pt-1">
           {BOTTOM_TABS.map((tab) => (
             <BottomTab key={tab.to} {...tab} />
@@ -154,47 +149,49 @@ export default function App() {
 function ProfilePage() {
   return (
     <div className="p-5 md:p-8 max-w-2xl mx-auto">
-      <h1 className="text-xl font-medium text-neutral-800 mb-2">Profile</h1>
-      <p className="text-[11px] text-warm-500 tracking-wide mb-8">YOUR ACCOUNT & APP SETTINGS</p>
+      <h1 className="text-2xl font-bold text-ink uppercase tracking-tight mb-2">Profile</h1>
+      <p className="text-[11px] font-bold text-warm-600 tracking-wide mb-8">YOUR ACCOUNT & APP SETTINGS</p>
 
-      <div className="bg-white rounded-hero border border-border p-6 mb-4">
+      <div className="bg-white rounded-hero border-2 border-ink shadow-brutal p-6 mb-4">
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-14 h-14 rounded-full bg-terra/10 flex items-center justify-center">
+          <div className="w-14 h-14 rounded-full bg-amber border-2 border-ink flex items-center justify-center">
             <span className="text-2xl">👤</span>
           </div>
           <div>
-            <p className="font-medium text-neutral-800">Kavina</p>
-            <p className="text-[11px] text-warm-500 tracking-wide mt-0.5">PERSONAL ACCOUNT</p>
+            <p className="font-bold text-ink">Kavina</p>
+            <p className="text-[11px] font-bold text-warm-600 tracking-wide mt-0.5">PERSONAL ACCOUNT</p>
           </div>
         </div>
 
         <div className="space-y-3">
           {[
-            { to: '/savings',    icon: <Crosshair size={18} className="text-terra" />, title: 'Savings Goals', sub: 'Track progress toward targets' },
-            { to: '/categories', icon: <Tag size={18} className="text-terra" />,        title: 'Manage Categories', sub: 'Edit income & expense categories' },
-            { to: '/budgets',    icon: <Target size={18} className="text-terra" />,     title: 'Budget Limits', sub: 'Set monthly spending limits' },
-            { to: '/yearly',     icon: <BarChart3 size={18} className="text-terra" />,  title: 'Yearly Overview', sub: 'Full-year financial report' },
+            { to: '/savings',    icon: <Crosshair size={18} className="text-white" />, bg: 'bg-invest', title: 'Savings Goals', sub: 'Track progress toward targets' },
+            { to: '/categories', icon: <Tag size={18} className="text-white" />,        bg: 'bg-terra',  title: 'Manage Categories', sub: 'Edit income & expense categories' },
+            { to: '/budgets',    icon: <Target size={18} className="text-white" />,     bg: 'bg-amber',  title: 'Budget Limits', sub: 'Set monthly spending limits' },
+            { to: '/yearly',     icon: <BarChart3 size={18} className="text-white" />,  bg: 'bg-sage',   title: 'Yearly Overview', sub: 'Full-year financial report' },
           ].map(item => (
-            <NavLink key={item.to} to={item.to} className="flex items-center gap-3 p-4 rounded-item border border-border hover:border-terra/30 transition-colors">
-              {item.icon}
+            <NavLink key={item.to} to={item.to} className="flex items-center gap-3 p-4 rounded-item border-2 border-ink hover:shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all">
+              <span className={`w-9 h-9 rounded-item ${item.bg} border-2 border-ink flex items-center justify-center shrink-0`}>{item.icon}</span>
               <div>
-                <p className="text-sm font-medium text-neutral-800">{item.title}</p>
+                <p className="text-sm font-bold text-ink">{item.title}</p>
                 <p className="text-[11px] text-warm-500 mt-0.5">{item.sub}</p>
               </div>
             </NavLink>
           ))}
 
-          <a href="/api/backup" download className="flex items-center gap-3 p-4 rounded-item border border-border hover:border-terra/30 transition-colors">
-            <Download size={18} className="text-terra" />
+          <a href="/api/backup" download className="flex items-center gap-3 p-4 rounded-item border-2 border-ink hover:shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all">
+            <span className="w-9 h-9 rounded-item bg-ink border-2 border-ink flex items-center justify-center shrink-0">
+              <Download size={18} className="text-white" />
+            </span>
             <div>
-              <p className="text-sm font-medium text-neutral-800">Download Backup</p>
+              <p className="text-sm font-bold text-ink">Download Backup</p>
               <p className="text-[11px] text-warm-500 mt-0.5">Full JSON export of all data</p>
             </div>
           </a>
         </div>
       </div>
 
-      <p className="text-center text-[11px] text-warm-500 tracking-wide mt-6">MONEY TRACKER · PERSONAL · v1.0</p>
+      <p className="text-center text-[11px] font-bold text-warm-600 tracking-wide mt-6">MONEY TRACKER · PERSONAL · v1.0</p>
     </div>
   )
 }

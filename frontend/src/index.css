@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -11,19 +11,24 @@
 }
 
 html {
-  background-color: #FAFAFA;
+  background-color: #FFF3DE;
 }
 
 body {
-  background-color: #FAFAFA;
+  background-color: #FFF3DE;
   color: #0A0A0A;
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+::selection {
+  background-color: #0A0A0A;
+  color: #FFF3DE;
+}
+
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -31,12 +36,13 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #D4D4D4;
-  border-radius: 2px;
+  background: #0A0A0A;
+  border-radius: 0px;
+  border: 2px solid #FFF3DE;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #A3A3A3;
+  background: #262626;
 }
 
 input, select, textarea {
@@ -45,7 +51,7 @@ input, select, textarea {
 
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23525252' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%230A0A0A' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
@@ -53,12 +59,13 @@ select {
 
 .recharts-tooltip-wrapper .recharts-default-tooltip {
   background: #fff !important;
-  border: 1px solid #E5E5E5 !important;
+  border: 2px solid #0A0A0A !important;
   border-radius: 12px !important;
+  box-shadow: 4px 4px 0px 0px rgba(10, 10, 10, 1) !important;
 }
 
 @media (max-width: 639px) {
   body {
-    padding-bottom: 72px;
+    padding-bottom: 76px;
   }
 }

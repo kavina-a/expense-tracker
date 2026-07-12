@@ -61,30 +61,30 @@ export default function AddTransaction() {
           <ArrowLeft size={20} />
         </button>
         <div>
-          <h1 className="text-xl font-medium text-neutral-800">Add Entry</h1>
-          <p className="text-[11px] text-warm-500 tracking-wide mt-0.5">LOG A NEW TRANSACTION</p>
+          <h1 className="text-2xl font-bold text-ink uppercase tracking-tight">Add Entry</h1>
+          <p className="text-[11px] font-bold text-warm-600 tracking-wide mt-0.5">LOG A NEW TRANSACTION</p>
         </div>
       </div>
 
       {success ? (
-        <div className="bg-white rounded-hero border border-sage/30 p-12 flex flex-col items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-sage/10 flex items-center justify-center">
-            <Check size={32} className="text-sage" />
+        <div className="bg-sage rounded-hero border-2 border-ink shadow-brutal p-12 flex flex-col items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-white border-2 border-ink flex items-center justify-center">
+            <Check size={32} className="text-sage-dark" strokeWidth={3} />
           </div>
-          <p className="text-lg font-medium text-neutral-800">Added!</p>
-          <p className="text-sm text-warm-500">Your transaction has been saved.</p>
+          <p className="text-lg font-bold text-white">Added!</p>
+          <p className="text-sm font-bold text-white/80">Your transaction has been saved.</p>
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="bg-white rounded-hero border border-border p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="bg-white rounded-hero border-2 border-ink shadow-brutal p-6 space-y-5">
           {/* Type toggle */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => { setType('expense'); setCategory('') }}
-              className={`py-3 rounded-item text-sm font-medium border transition-all ${
+              className={`py-3 rounded-item text-sm font-bold border-2 transition-all ${
                 type === 'expense'
-                  ? 'bg-terra/10 border-terra/30 text-terra'
-                  : 'border-border text-warm-500 hover:bg-warm-100'
+                  ? 'bg-terra border-ink text-white shadow-brutal-xs'
+                  : 'border-ink text-warm-500 hover:bg-warm-100'
               }`}
             >
               Expense
@@ -92,25 +92,36 @@ export default function AddTransaction() {
             <button
               type="button"
               onClick={() => { setType('income'); setCategory('') }}
-              className={`py-3 rounded-item text-sm font-medium border transition-all ${
+              className={`py-3 rounded-item text-sm font-bold border-2 transition-all ${
                 type === 'income'
-                  ? 'bg-sage/10 border-sage/30 text-sage'
-                  : 'border-border text-warm-500 hover:bg-warm-100'
+                  ? 'bg-sage border-ink text-white shadow-brutal-xs'
+                  : 'border-ink text-warm-500 hover:bg-warm-100'
               }`}
             >
               Income
+            </button>
+            <button
+              type="button"
+              onClick={() => { setType('investment'); setCategory('') }}
+              className={`py-3 rounded-item text-sm font-bold border-2 transition-all ${
+                type === 'investment'
+                  ? 'bg-invest border-ink text-white shadow-brutal-xs'
+                  : 'border-ink text-warm-500 hover:bg-warm-100'
+              }`}
+            >
+              Invest
             </button>
           </div>
 
           {/* Amount */}
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">AMOUNT (RS.)</label>
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">AMOUNT (LKR)</label>
             <input
               type="number"
               value={amount}
               onChange={e => setAmount(e.target.value)}
               placeholder="0"
-              className="w-full px-4 py-3 bg-cream border border-border rounded-item text-2xl font-medium text-neutral-800 placeholder-warm-400 focus:outline-none focus:border-terra/40"
+              className="w-full px-4 py-3 bg-cream border-2 border-ink rounded-item text-2xl font-bold text-ink tracking-tight placeholder-warm-400 focus:outline-none focus:border-terra"
               autoFocus
               min="0"
               step="any"
@@ -119,53 +130,56 @@ export default function AddTransaction() {
 
           {/* Category */}
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">CATEGORY</label>
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">CATEGORY</label>
             <div className="flex flex-wrap gap-2">
-              {filtered.map(c => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setCategory(c.name)}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border transition-all ${
-                    category === c.name
-                      ? 'bg-terra/10 border-terra/30 text-terra'
-                      : 'border-border text-warm-600 hover:border-warm-400'
-                  }`}
-                >
-                  <span>{c.icon}</span>
-                  {c.name}
-                </button>
-              ))}
+              {filtered.map(c => {
+                const activeClass = type === 'income' ? 'bg-sage border-ink text-white shadow-brutal-xs'
+                  : type === 'investment' ? 'bg-invest border-ink text-white shadow-brutal-xs'
+                  : 'bg-terra border-ink text-white shadow-brutal-xs'
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setCategory(c.name)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold border-2 transition-all ${
+                      category === c.name ? activeClass : 'border-ink text-warm-600 hover:bg-warm-100'
+                    }`}
+                  >
+                    <span>{c.icon}</span>
+                    {c.name}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
           {/* Description */}
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">NOTE (OPTIONAL)</label>
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">NOTE (OPTIONAL)</label>
             <input
               type="text"
               value={description}
               onChange={e => setDesc(e.target.value)}
               placeholder="What was this for?"
-              className="w-full px-4 py-3 bg-cream border border-border rounded-item text-sm text-neutral-800 placeholder-warm-400 focus:outline-none focus:border-terra/40"
+              className="w-full px-4 py-3 bg-cream border-2 border-ink rounded-item text-sm font-bold text-ink placeholder-warm-400 focus:outline-none focus:border-terra"
             />
           </div>
 
           {/* Date */}
           <div>
-            <label className="block text-[11px] font-medium text-warm-500 tracking-wide mb-2">DATE</label>
+            <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">DATE</label>
             <input
               type="date"
               value={date}
               onChange={e => setDate(e.target.value)}
-              className="w-full px-4 py-3 bg-cream border border-border rounded-item text-sm text-neutral-800 focus:outline-none focus:border-terra/40"
+              className="w-full px-4 py-3 bg-cream border-2 border-ink rounded-item text-sm font-bold text-ink focus:outline-none focus:border-terra"
             />
           </div>
 
           <button
             type="submit"
             disabled={!amount || !category || addMut.isPending}
-            className="w-full py-3.5 rounded-item text-sm font-medium bg-terra hover:bg-terra-dark text-white transition-colors disabled:opacity-40"
+            className="w-full py-3.5 rounded-item text-sm font-bold uppercase tracking-wide bg-terra hover:bg-terra-dark text-white transition-all border-2 border-ink shadow-brutal-sm hover:shadow-none hover:translate-x-[3px] hover:translate-y-[3px] disabled:opacity-40"
           >
             {addMut.isPending ? 'Saving…' : 'Add Transaction'}
           </button>
