@@ -54,16 +54,17 @@ function Modal({ title, onClose, children }) {
 }
 
 function CategoryForm({ initial, onSave, onCancel }) {
-  const [name,  setName]  = useState(initial?.name  || '')
-  const [icon,  setIcon]  = useState(initial?.icon  || '📦')
-  const [color, setColor] = useState(initial?.color || '#525252')
-  const [type,  setType]  = useState(initial?.type  || 'expense')
+  const [name,      setName]      = useState(initial?.name      || '')
+  const [icon,      setIcon]      = useState(initial?.icon      || '📦')
+  const [color,     setColor]     = useState(initial?.color     || '#525252')
+  const [type,      setType]      = useState(initial?.type      || 'expense')
+  const [isReturn,  setIsReturn]  = useState(Boolean(initial?.is_return))
   const [showPicker, setShowPicker] = useState(false)
 
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!name.trim()) return
-    onSave({ name: name.trim(), icon, color, type })
+    onSave({ name: name.trim(), icon, color, type, is_return: type === 'income' ? isReturn : false })
   }
 
   return (
@@ -167,15 +168,44 @@ function CategoryForm({ initial, onSave, onCancel }) {
         </div>
       </div>
 
+      {/* Investment return toggle — only for income categories */}
+      {type === 'income' && (
+        <div>
+          <label className="block text-[11px] font-bold text-warm-600 tracking-wide mb-2">INVESTMENT RETURN?</label>
+          <button
+            type="button"
+            onClick={() => setIsReturn(r => !r)}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-item border-2 font-bold text-sm transition-all ${
+              isReturn
+                ? 'bg-invest border-ink text-white shadow-brutal-xs'
+                : 'border-ink text-warm-500 hover:bg-warm-100'
+            }`}
+          >
+            <span>{isReturn ? '✓ Marked as investment return' : 'Mark as investment return'}</span>
+            <span className="text-[11px] opacity-70">e.g. dividends, stock sales</span>
+          </button>
+          {isReturn && (
+            <p className="text-[11px] font-bold text-warm-500 mt-1.5 px-1">
+              Income from this category will count as portfolio returns on the Portfolio page.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Preview */}
       <div className="flex items-center gap-3 p-3 rounded-item border-2 border-ink bg-cream">
         <span className="text-lg">{icon}</span>
         <span className="text-sm font-bold" style={{ color }}>{name || 'Category name'}</span>
-        <span className={`text-[11px] font-bold ml-auto px-2 py-0.5 rounded-full border border-ink ${
-          type === 'income' ? 'bg-sage text-white' : type === 'investment' ? 'bg-invest text-white' : 'bg-terra text-white'
-        }`}>
-          {type}
-        </span>
+        <div className="ml-auto flex items-center gap-1.5">
+          {type === 'income' && isReturn && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-invest text-white border border-ink">RETURN</span>
+          )}
+          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border border-ink ${
+            type === 'income' ? 'bg-sage text-white' : type === 'investment' ? 'bg-invest text-white' : 'bg-terra text-white'
+          }`}>
+            {type}
+          </span>
+        </div>
       </div>
 
       <div className="flex gap-2 pt-1">
@@ -305,7 +335,12 @@ function CategoryGrid({ title, icon: Icon, iconClass, categories, onEdit, onDele
                   {cat.icon}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-ink truncate">{cat.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-bold text-ink truncate">{cat.name}</p>
+                    {cat.is_return ? (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-invest text-white border border-ink shrink-0">RETURN</span>
+                    ) : null}
+                  </div>
                   <div className="flex items-center gap-1 mt-0.5">
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }} />
                     <p className="text-[11px] text-warm-400">{cat.color}</p>

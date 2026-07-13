@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { Home, Clock, PlusCircle, BarChart3, User, ChevronLeft, ChevronRight, Download, Tag, Target, Crosshair } from 'lucide-react'
+import { Home, Clock, PlusCircle, BarChart3, User, ChevronLeft, ChevronRight, Download, Tag, Target, Crosshair, TrendingUp } from 'lucide-react'
 import { useState } from 'react'
 import Dashboard      from './pages/Dashboard'
 import Transactions   from './pages/Transactions'
@@ -9,6 +9,7 @@ import Budgets        from './pages/Budgets'
 import Yearly         from './pages/Yearly'
 import AddTransaction from './pages/AddTransaction'
 import SavingsGoals   from './pages/SavingsGoals'
+import Investments    from './pages/Investments'
 
 const BOTTOM_TABS = [
   { to: '/',             label: 'Home',    icon: Home },
@@ -23,6 +24,7 @@ const SIDEBAR_NAV = [
   { to: '/transactions', label: 'History',      icon: Clock },
   { to: '/stats',        label: 'Stats',        icon: BarChart3 },
   { to: '/yearly',       label: 'Yearly',       icon: BarChart3 },
+  { to: '/investments',  label: 'Portfolio',    icon: TrendingUp },
   { to: '/categories',   label: 'Categories',   icon: Tag },
   { to: '/budgets',      label: 'Budgets',      icon: Target },
   { to: '/savings',      label: 'Savings Goals', icon: Crosshair },
@@ -130,6 +132,7 @@ export default function App() {
           <Route path="/yearly"       element={<Yearly />} />
           <Route path="/add"          element={<AddTransaction />} />
           <Route path="/savings"      element={<SavingsGoals />} />
+          <Route path="/investments"  element={<Investments />} />
           <Route path="/profile"      element={<ProfilePage />} />
         </Routes>
       </main>
@@ -165,10 +168,11 @@ function ProfilePage() {
 
         <div className="space-y-3">
           {[
-            { to: '/savings',    icon: <Crosshair size={18} className="text-white" />, bg: 'bg-invest', title: 'Savings Goals', sub: 'Track progress toward targets' },
+            { to: '/investments', icon: <TrendingUp size={18} className="text-white" />,  bg: 'bg-invest', title: 'Portfolio',        sub: 'Track investments & returns' },
+            { to: '/savings',    icon: <Crosshair size={18} className="text-white" />,  bg: 'bg-amber',  title: 'Savings Goals',    sub: 'Track progress toward targets' },
             { to: '/categories', icon: <Tag size={18} className="text-white" />,        bg: 'bg-terra',  title: 'Manage Categories', sub: 'Edit income & expense categories' },
-            { to: '/budgets',    icon: <Target size={18} className="text-white" />,     bg: 'bg-amber',  title: 'Budget Limits', sub: 'Set monthly spending limits' },
-            { to: '/yearly',     icon: <BarChart3 size={18} className="text-white" />,  bg: 'bg-sage',   title: 'Yearly Overview', sub: 'Full-year financial report' },
+            { to: '/budgets',    icon: <Target size={18} className="text-white" />,     bg: 'bg-sage',   title: 'Budget Limits',    sub: 'Set monthly spending limits' },
+            { to: '/yearly',     icon: <BarChart3 size={18} className="text-white" />,  bg: 'bg-ink',    title: 'Yearly Overview',  sub: 'Full-year financial report' },
           ].map(item => (
             <NavLink key={item.to} to={item.to} className="flex items-center gap-3 p-4 rounded-item border-2 border-ink hover:shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all">
               <span className={`w-9 h-9 rounded-item ${item.bg} border-2 border-ink flex items-center justify-center shrink-0`}>{item.icon}</span>

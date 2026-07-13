@@ -28,6 +28,34 @@ const {
   buildCategoryBarConfig,
 } = require('./charts');
 
+// Pending clarifications: when Kash asks a follow-up, the next message is merged with the original.
+// Keyed by channel:chatId. In-memory is enough for a single-user bot; TTL avoids stale merges.
+const PENDING_TTL_MS = 10 * 60 * 1000;
+const pendingByChat = new Map();
+
+function pendingKey(channel, chatId) {
+  return `${channel}:${chatId || 'default'}`;
+}
+
+function getPending(channel, chatId) {
+  const key = pendingKey(channel, chatId);
+  const entry = pendingByChat.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.at > PENDING_TTL_MS) {
+    pendingByChat.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function setPending(channel, chatId, text) {
+  pendingByChat.set(pendingKey(channel, chatId), { text, at: Date.now() });
+}
+
+function clearPending(channel, chatId) {
+  pendingByChat.delete(pendingKey(channel, chatId));
+}
+
 function todayStr()     { return new Date().toLocaleDateString('sv-SE'); }
 function thisMonthStr() { return todayStr().slice(0, 7); }
 
@@ -49,7 +77,10 @@ function enrichWithColors(expenses) {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-async function processMessage({ type, text, imageBuffer, imageMimeType, rawText, channel = 'unknown' }, sender) {
+async function processMessage(
+  { type, text, imageBuffer, imageMimeType, rawText, channel = 'unknown', chatId = null },
+  sender
+) {
   const today     = todayStr();
   const thisMonth = thisMonthStr();
   const categories = db.getCategories();
@@ -58,17 +89,33 @@ async function processMessage({ type, text, imageBuffer, imageMimeType, rawText,
   log('info', 'Handler', 'message_received', {
     channel,
     type,
+    chatId: chatId ? String(chatId) : null,
     inputPreview: type === 'text' ? preview(text) : null,
     imageBytes: type === 'image' ? imageBuffer?.length || 0 : null,
     imageMimeType: type === 'image' ? imageMimeType : null,
   });
 
+  let parseInput = type === 'text' ? text.trim() : null;
+  let combinedRaw = rawText || text || '[image]';
+  const pending = type === 'text' ? getPending(channel, chatId) : null;
+  if (pending && parseInput) {
+    parseInput = `Previous: ${pending.text}\nFollow-up: ${parseInput}`;
+    combinedRaw = `${pending.text}\n${text.trim()}`;
+    log('info', 'Handler', 'pending_merged', {
+      channel,
+      chatId: chatId ? String(chatId) : null,
+      previousPreview: preview(pending.text, 80),
+      followUpPreview: preview(text, 80),
+    });
+  }
+
   let parsed;
   try {
     if (type === 'image') {
+      clearPending(channel, chatId);
       parsed = await parseImageMessage(imageBuffer, imageMimeType || 'image/jpeg', categories);
     } else {
-      parsed = await parseTextMessage(text.trim(), categories);
+      parsed = await parseTextMessage(parseInput, categories);
     }
   } catch (err) {
     logError('Handler', err, {
@@ -76,7 +123,7 @@ async function processMessage({ type, text, imageBuffer, imageMimeType, rawText,
       type,
       stage: 'parse',
       durationMs: Date.now() - start,
-      inputPreview: type === 'text' ? preview(text) : null,
+      inputPreview: type === 'text' ? preview(parseInput) : null,
       imageBytes: type === 'image' ? imageBuffer?.length || 0 : null,
     });
     await sender.sendText('Something went wrong, try again');
@@ -91,18 +138,24 @@ async function processMessage({ type, text, imageBuffer, imageMimeType, rawText,
   });
 
   if (parsed.isQuery) {
+    clearPending(channel, chatId);
     await handleQuery(parsed, today, thisMonth, sender, channel);
   } else {
-    await handleTransaction(parsed, rawText || text || '[image]', today, thisMonth, sender, channel);
+    await handleTransaction(parsed, combinedRaw, today, thisMonth, sender, channel, chatId);
   }
 }
 
 // ─── Transaction ──────────────────────────────────────────────────────────────
 
-async function handleTransaction(parsed, rawText, today, thisMonth, sender, channel) {
+async function handleTransaction(parsed, rawText, today, thisMonth, sender, channel, chatId = null) {
   if (parsed.needsClarification && parsed.question) {
+    // Keep full context across turns (join multi-line merges into one pending blob).
+    const pendingText = String(rawText || '').replace(/\n+/g, ' · ').trim() || rawText;
+    setPending(channel, chatId, pendingText);
     log('info', 'Handler', 'clarification_sent', {
       channel,
+      chatId: chatId ? String(chatId) : null,
+      pendingPreview: preview(pendingText, 80),
       questionPreview: preview(parsed.question, 120),
     });
     await sender.sendText(parsed.question);
@@ -110,10 +163,14 @@ async function handleTransaction(parsed, rawText, today, thisMonth, sender, chan
   }
 
   if (!parsed.amount) {
+    const pendingText = String(rawText || '').replace(/\n+/g, ' · ').trim() || rawText;
+    setPending(channel, chatId, pendingText);
     log('warn', 'Handler', 'missing_amount', { channel, parsed: summarizeParsed(parsed) });
     await sender.sendText("How much was it? Try: 450 lunch");
     return;
   }
+
+  clearPending(channel, chatId);
 
   const tx = db.insertTransaction({
     amount:      parsed.amount,

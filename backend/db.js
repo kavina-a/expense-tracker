@@ -83,6 +83,11 @@ try {
   db.exec("ALTER TABLE categories ADD COLUMN type TEXT NOT NULL DEFAULT 'expense'");
 } catch { /* already exists */ }
 
+// Mark income categories that represent investment returns (dividends, stock sales, etc.)
+try {
+  db.exec("ALTER TABLE categories ADD COLUMN is_return INTEGER NOT NULL DEFAULT 0");
+} catch { /* already exists */ }
+
 const DEFAULT_CATEGORIES = [
   // ── Income ──────────────────────────────────────────────────────────────────
   { name: 'Arimac',                 icon: '💼', color: '#0A0A0A', type: 'income' },
@@ -92,7 +97,7 @@ const DEFAULT_CATEGORIES = [
   { name: 'Icloud (Shakthi)',       icon: '☁️',  color: '#737373', type: 'income' },
   { name: 'Birthday Money',         icon: '🎂', color: '#8A8A8A', type: 'income' },
   { name: 'Class (Zaiden)',         icon: '📖', color: '#A3A3A3', type: 'income' },
-  { name: 'Stock Exchange - DIV',   icon: '📈', color: '#171717', type: 'income' },
+  { name: 'Stock Exchange - DIV',   icon: '📈', color: '#171717', type: 'income', is_return: 1 },
   { name: 'Money from rand places', icon: '💰', color: '#3D3D3D', type: 'income' },
   { name: 'Bottles',                icon: '🍶', color: '#5C5C5C', type: 'income' },
   // ── Expense ─────────────────────────────────────────────────────────────────
@@ -126,12 +131,17 @@ function seedCategories() {
   const updateType = db.prepare(
     "UPDATE categories SET type = ? WHERE name = ? AND type = 'expense'"
   );
+  const markReturn = db.prepare(
+    'UPDATE categories SET is_return = 1 WHERE name = ?'
+  );
   const now = new Date().toISOString();
   db.transaction(() => {
     for (const cat of DEFAULT_CATEGORIES) {
       insert.run(cat.name, cat.icon, cat.color, cat.type, now);
       // Backfill type for already-existing categories (metadata only — never touches transactions)
       if (cat.type === 'income' || cat.type === 'investment') updateType.run(cat.type, cat.name);
+      // Mark investment return categories (idempotent)
+      if (cat.is_return) markReturn.run(cat.name);
     }
   })();
 }
@@ -323,18 +333,19 @@ function getCategories() {
   return db.prepare('SELECT * FROM categories ORDER BY type ASC, name ASC').all();
 }
 
-function insertCategory({ name, icon, color, type = 'expense' }) {
+function insertCategory({ name, icon, color, type = 'expense', is_return = 0 }) {
   const result = db.prepare(
-    'INSERT INTO categories (name, icon, color, type, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(name, icon || '📦', color || '#525252', type, new Date().toISOString());
+    'INSERT INTO categories (name, icon, color, type, is_return, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(name, icon || '📦', color || '#525252', type, is_return ? 1 : 0, new Date().toISOString());
   return db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
 }
 
-function updateCategory(id, { name, icon, color, type }) {
+function updateCategory(id, { name, icon, color, type, is_return }) {
   const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
   if (!existing) return null;
 
   const newName = name || existing.name;
+  const newIsReturn = is_return != null ? (is_return ? 1 : 0) : null;
 
   db.transaction(() => {
     if (newName !== existing.name) {
@@ -342,8 +353,8 @@ function updateCategory(id, { name, icon, color, type }) {
       db.prepare('UPDATE budgets SET category = ? WHERE category = ?').run(newName, existing.name);
     }
     db.prepare(
-      'UPDATE categories SET name = ?, icon = COALESCE(?, icon), color = COALESCE(?, color), type = COALESCE(?, type) WHERE id = ?'
-    ).run(newName, icon || null, color || null, type || null, id);
+      'UPDATE categories SET name = ?, icon = COALESCE(?, icon), color = COALESCE(?, color), type = COALESCE(?, type), is_return = COALESCE(?, is_return) WHERE id = ?'
+    ).run(newName, icon || null, color || null, type || null, newIsReturn, id);
   })();
 
   return db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
@@ -557,6 +568,68 @@ function deleteSavingsGoal(id) {
   return goal;
 }
 
+// ─── Portfolio / Investment tracking ──────────────────────────────────────────
+
+function getPortfolioSummary() {
+  const SENTINEL = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')";
+
+  // Money put INTO investments (type = 'investment')
+  const investRows = db.prepare(`
+    SELECT category, SUM(amount) as total, COUNT(*) as cnt
+    FROM transactions
+    WHERE type = 'investment' ${SENTINEL}
+    GROUP BY category
+    ORDER BY total DESC
+  `).all();
+
+  // Money returned FROM investments (income where category.is_return = 1)
+  const returnRows = db.prepare(`
+    SELECT t.category, SUM(t.amount) as total, COUNT(*) as cnt
+    FROM transactions t
+    INNER JOIN categories c ON c.name = t.category AND c.is_return = 1
+    WHERE t.type = 'income'
+      AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
+    GROUP BY t.category
+    ORDER BY total DESC
+  `).all();
+
+  // Recent investment + return transactions (combined feed)
+  const recentTx = db.prepare(`
+    SELECT t.id, t.amount, t.type, t.category, t.description, t.date, t.created_at,
+           COALESCE(c.is_return, 0) as is_return
+    FROM transactions t
+    LEFT JOIN categories c ON c.name = t.category
+    WHERE (
+      t.type = 'investment'
+      OR (t.type = 'income' AND c.is_return = 1)
+    )
+    AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
+    ORDER BY t.date DESC, t.created_at DESC
+    LIMIT 50
+  `).all();
+
+  // Monthly breakdown for chart (last 24 months)
+  const monthlyRows = db.prepare(`
+    SELECT strftime('%Y-%m', t.date) as month,
+           SUM(CASE WHEN t.type = 'investment' THEN t.amount ELSE 0 END) as invested,
+           SUM(CASE WHEN t.type = 'income' AND c.is_return = 1 THEN t.amount ELSE 0 END) as returned
+    FROM transactions t
+    LEFT JOIN categories c ON c.name = t.category
+    WHERE (t.type = 'investment' OR (t.type = 'income' AND c.is_return = 1))
+      AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
+      AND t.date >= date('now', '-24 months')
+    GROUP BY month
+    ORDER BY month ASC
+  `).all();
+
+  const totalInvested = investRows.reduce((s, r) => s + r.total, 0);
+  const totalReturns  = returnRows.reduce((s, r) => s + r.total, 0);
+  const netGain       = totalReturns - totalInvested;
+  const roiPct        = totalInvested > 0 ? (netGain / totalInvested) * 100 : 0;
+
+  return { totalInvested, totalReturns, netGain, roiPct, investRows, returnRows, recentTx, monthlyRows };
+}
+
 // ─── Backup / Restore ─────────────────────────────────────────────────────────
 
 function getFullBackup() {
@@ -639,5 +712,6 @@ module.exports = {
   deleteSavingsGoal,
   getFullBackup,
   restoreFromBackup,
+  getPortfolioSummary,
   getDbInfo,
 };

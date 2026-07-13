@@ -59,6 +59,9 @@ export const createBudget = (body)      => req('/budgets', { method: 'POST', bod
 export const updateBudget = (id, body)  => req(`/budgets/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteBudget = (id)        => req(`/budgets/${id}`, { method: 'DELETE' })
 
+// Portfolio
+export const getPortfolio = () => req('/portfolio')
+
 // Savings goals
 export const getSavingsGoals  = ()         => req('/savings-goals')
 export const createSavingsGoal = (body)    => req('/savings-goals', { method: 'POST', body: JSON.stringify(body) })

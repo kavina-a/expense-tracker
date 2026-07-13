@@ -84,11 +84,11 @@ app.post('/webhook', async (req, res) => {
     if (msg.type === 'image') {
       const media = await waDownload(msg.image.id);
       if (!media) { await waSend(from, 'Could not download the image. Please try again.'); return; }
-      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'whatsapp' }, waSender);
+      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'whatsapp', chatId: from }, waSender);
     } else if (msg.type === 'text') {
       const text = msg.text.body.trim();
       if (!text) return;
-      await processMessage({ type: 'text', text, rawText: text, channel: 'whatsapp' }, waSender);
+      await processMessage({ type: 'text', text, rawText: text, channel: 'whatsapp', chatId: from }, waSender);
     } else {
       await waSend(from, 'I can only process text messages and receipt images.');
     }
@@ -141,11 +141,11 @@ app.post('/telegram', async (req, res) => {
       const fileId = message.photo[message.photo.length - 1].file_id;
       const media  = await tg.downloadMedia(fileId);
       if (!media) { await tg.sendMessage(chatId, 'Could not download the image. Please try again.'); return; }
-      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'telegram' }, tgSender);
+      await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'telegram', chatId }, tgSender);
     } else if (message.text) {
       const text = message.text.trim();
       if (!text) return;
-      await processMessage({ type: 'text', text, rawText: text, channel: 'telegram' }, tgSender);
+      await processMessage({ type: 'text', text, rawText: text, channel: 'telegram', chatId }, tgSender);
     } else {
       await tg.sendMessage(chatId, 'I can only process text messages and receipt images.');
     }
@@ -257,15 +257,18 @@ app.post('/api/restore', apiHandler((req, res) => {
   res.json({ ok: true, ...result });
 }));
 
+// Portfolio
+app.get('/api/portfolio', apiHandler((_req, res) => res.json(db.getPortfolioSummary())));
+
 // Categories
 app.get('/api/categories', apiHandler((_req, res) => res.json(db.getCategories())));
 
 app.post('/api/categories', apiHandler((req, res) => {
-  const { name, icon, color, type } = req.body;
+  const { name, icon, color, type, is_return } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   if (type && !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'type must be income, expense, or investment' });
   try {
-    res.status(201).json(db.insertCategory({ name: name.trim(), icon, color, type }));
+    res.status(201).json(db.insertCategory({ name: name.trim(), icon, color, type, is_return: is_return ? 1 : 0 }));
   } catch {
     res.status(409).json({ error: 'Category already exists' });
   }
