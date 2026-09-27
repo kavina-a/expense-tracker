@@ -6,6 +6,8 @@ const db       = require('./db');
 const { sendMessage: waSend, sendChartImage: waSendChart, downloadMedia: waDownload } = require('./whatsapp');
 const tg       = require('./telegram');
 const { processMessage } = require('./handler');
+const { mountSmsRoutes } = require('./sms/http');
+const { handleSmsCallback, handleSmsTextReply } = require('./sms/telegramNotify');
 
 const app = express();
 app.use(express.json());
@@ -116,18 +118,28 @@ app.post('/telegram', async (req, res) => {
 
   try {
     const update = req.body;
-    const message = update?.message;
-    if (!message) return;
+    const callback = update?.callback_query;
+    const message = callback ? callback.message : update?.message;
 
-    const chatId   = message.chat?.id;
-    const fromId   = String(message.from?.id);
-
-    // Guard: only respond to the owner
     if (!process.env.MY_TELEGRAM_CHAT_ID) {
       console.error('[Telegram] MY_TELEGRAM_CHAT_ID not set — ignoring all messages');
       return;
     }
-    if (String(chatId) !== process.env.MY_TELEGRAM_CHAT_ID) return;
+
+    const chatId = message?.chat?.id;
+    if (!chatId || String(chatId) !== process.env.MY_TELEGRAM_CHAT_ID) return;
+
+    if (callback) {
+      await handleSmsCallback(callback);
+      return;
+    }
+
+    if (!message) return;
+
+    if (message.reply_to_message && message.text?.trim()) {
+      const smsReply = await handleSmsTextReply(message);
+      if (smsReply) return;
+    }
 
     console.log(`[Telegram] Message from chat ${chatId}: type=${message.photo ? 'image' : 'text'}`);
 
@@ -152,7 +164,7 @@ app.post('/telegram', async (req, res) => {
   } catch (err) {
     console.error('[Telegram] Webhook error:', err);
     try {
-      const chatId = req.body?.message?.chat?.id;
+      const chatId = req.body?.message?.chat?.id || req.body?.callback_query?.message?.chat?.id;
       if (chatId && String(chatId) === process.env.MY_TELEGRAM_CHAT_ID) {
         await tg.sendMessage(chatId, 'Something went wrong, try again');
       }
@@ -362,6 +374,10 @@ app.delete('/api/savings-goals/:id', apiHandler((req, res) => {
   deleted ? res.json(deleted) : res.status(404).json({ error: 'Not found' });
 }));
 
+// ─── SMS ingest (iOS Shortcut) ────────────────────────────────────────────────
+
+mountSmsRoutes(app);
+
 // ─── Health check + Meta-required pages ──────────────────────────────────────
 
 app.get('/health', (_req, res) => {
@@ -428,5 +444,6 @@ app.listen(PORT, () => {
   console.log(`📊  Dashboard:        http://localhost:${PORT}`);
   console.log(`🔗  WhatsApp webhook: http://localhost:${PORT}/webhook`);
   console.log(`📱  Telegram webhook: http://localhost:${PORT}/telegram`);
+  console.log(`💬  SMS ingest:       http://localhost:${PORT}/api/sms-ingest`);
   console.log(`📦  Backup:           GET ${PORT}/api/backup\n`);
 });

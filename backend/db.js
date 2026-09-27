@@ -41,14 +41,79 @@ db.pragma('journal_mode = WAL');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS transactions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    amount         REAL    NOT NULL,
+    type           TEXT    NOT NULL,
+    category       TEXT    NOT NULL,
+    description    TEXT,
+    date           TEXT    NOT NULL,
+    created_at     TEXT    NOT NULL,
+    raw_message    TEXT,
+    source         TEXT,
+    status         TEXT    NOT NULL DEFAULT 'posted',
+    merchant       TEXT,
+    account_masked TEXT,
+    balance_after  REAL,
+    occurred_at    TEXT,
+    reference      TEXT,
+    dedupe_key     TEXT,
+    bank           TEXT,
+    direction      TEXT,
+    note           TEXT,
+    note_reviewed  INTEGER NOT NULL DEFAULT 0,
+    telegram_notify_message_id INTEGER,
+    category_reply_pending INTEGER NOT NULL DEFAULT 0,
+    category_prompt_options TEXT,
+    category_prompt_message_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS muted_merchants (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    merchant  TEXT    NOT NULL UNIQUE,
+    muted_at  TEXT    NOT NULL
+  );
+
+  -- Decline resets the "3 no-note taps" streak so the next tap does not ask again.
+  CREATE TABLE IF NOT EXISTS merchant_note_streaks (
+    merchant              TEXT PRIMARY KEY,
+    reset_after_tx_id     INTEGER NOT NULL DEFAULT 0,
+    last_suggested_tx_id  INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS sms_raw (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount       REAL    NOT NULL,
-    type         TEXT    NOT NULL,
-    category     TEXT    NOT NULL,
-    description  TEXT,
-    date         TEXT    NOT NULL,
-    created_at   TEXT    NOT NULL,
-    raw_message  TEXT
+    text         TEXT    NOT NULL,
+    received_at  TEXT    NOT NULL,
+    parsed       INTEGER NOT NULL DEFAULT 0,
+    parser_match TEXT,
+    created_at   TEXT    NOT NULL
+  );
+
+  -- Reversal / credit-confirmation events. transaction_id points at the
+  -- original debit when linked. needs_review rows leave every candidate posted.
+  CREATE TABLE IF NOT EXISTS sms_reversals (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    sms_raw_id     INTEGER,
+    dedupe_key     TEXT    UNIQUE,
+    status         TEXT    NOT NULL,
+    transaction_id INTEGER,
+    candidate_ids  TEXT,
+    bank           TEXT,
+    merchant       TEXT,
+    amount         REAL,
+    account_masked TEXT,
+    reference      TEXT,
+    occurred_at    TEXT,
+    raw_text       TEXT    NOT NULL,
+    parser_match   TEXT,
+    created_at     TEXT    NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS category_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern    TEXT    NOT NULL UNIQUE,
+    category   TEXT    NOT NULL,
+    created_at TEXT    NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS budgets (
@@ -87,6 +152,45 @@ try {
 try {
   db.exec("ALTER TABLE categories ADD COLUMN is_return INTEGER NOT NULL DEFAULT 0");
 } catch { /* already exists */ }
+
+function addColumnIfMissing(table, name, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((col) => col.name === name)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+// Existing DBs created before SMS ingest. Fresh DBs already have these columns.
+for (const [name, definition] of [
+  ['source', 'TEXT'],
+  ['status', "TEXT NOT NULL DEFAULT 'posted'"],
+  ['merchant', 'TEXT'],
+  ['account_masked', 'TEXT'],
+  ['balance_after', 'REAL'],
+  ['occurred_at', 'TEXT'],
+  ['reference', 'TEXT'],
+  ['dedupe_key', 'TEXT'],
+  ['bank', 'TEXT'],
+  ['direction', 'TEXT'],
+  ['note', 'TEXT'],
+  ['note_reviewed', 'INTEGER NOT NULL DEFAULT 0'],
+  ['telegram_notify_message_id', 'INTEGER'],
+  ['category_reply_pending', 'INTEGER NOT NULL DEFAULT 0'],
+  ['category_prompt_options', 'TEXT'],
+  ['category_prompt_message_id', 'INTEGER'],
+]) {
+  addColumnIfMissing('transactions', name, definition);
+}
+
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_dedupe_key
+    ON transactions(dedupe_key) WHERE dedupe_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_transactions_sms_match
+    ON transactions(source, status, account_masked);
+  CREATE INDEX IF NOT EXISTS idx_transactions_tg_notify
+    ON transactions(telegram_notify_message_id)
+    WHERE telegram_notify_message_id IS NOT NULL;
+`);
 
 const DEFAULT_CATEGORIES = [
   // ── Income ──────────────────────────────────────────────────────────────────
@@ -147,21 +251,132 @@ function seedCategories() {
 }
 seedCategories();
 
+const DEFAULT_CATEGORY_RULES = [
+  { pattern: 'UBER EATS', category: 'Food' },
+  { pattern: 'FOODPANDA', category: 'Food' },
+  { pattern: 'PICKME FOOD', category: 'Food' },
+  { pattern: 'UBER', category: 'Transport' },
+];
+
+function seedCategoryRules() {
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO category_rules (pattern, category, created_at) VALUES (?, ?, ?)'
+  );
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const rule of DEFAULT_CATEGORY_RULES) {
+      insert.run(rule.pattern, rule.category, now);
+    }
+  })();
+}
+seedCategoryRules();
+
+function matchCategoryRule(merchant) {
+  if (!merchant) return null;
+  const hay = String(merchant).toUpperCase();
+  const rules = db.prepare('SELECT pattern, category FROM category_rules').all()
+    .sort((a, b) => b.pattern.length - a.pattern.length);
+  for (const rule of rules) {
+    if (hay.includes(String(rule.pattern).toUpperCase())) return rule.category;
+  }
+  return null;
+}
+
+function resolveCategory(merchant) {
+  return matchCategoryRule(merchant);
+}
+
+function upsertCategoryRule(pattern, category) {
+  const key = String(pattern || '').trim().toUpperCase();
+  const name = String(category || '').trim();
+  if (!key || !name) return null;
+  db.prepare(`
+    INSERT INTO category_rules (pattern, category, created_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(pattern) DO UPDATE SET category = excluded.category
+  `).run(key, name, new Date().toISOString());
+  return db.prepare('SELECT * FROM category_rules WHERE pattern = ?').get(key);
+}
+
+function listCategoriesInUse() {
+  const names = new Set();
+  const add = (name) => {
+    const text = String(name || '').trim();
+    if (!text || text === 'pending_category' || text === 'Uncategorized') return;
+    names.add(text);
+  };
+  for (const row of db.prepare(
+    "SELECT name FROM categories WHERE type = 'expense' OR type IS NULL"
+  ).all()) add(row.name);
+  for (const row of db.prepare('SELECT DISTINCT category AS name FROM category_rules').all()) add(row.name);
+  for (const row of db.prepare(`
+    SELECT DISTINCT category AS name FROM transactions
+    WHERE type = 'expense'
+      AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')
+  `).all()) add(row.name);
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
 // ─── Transactions ─────────────────────────────────────────────────────────────
 
-function insertTransaction({ amount, type, category, description, date, raw_message }) {
+function insertTransaction({
+  amount, type, category, description, date, raw_message,
+  source = null, status = 'posted', merchant = null, account_masked = null,
+  balance_after = null, occurred_at = null, reference = null, dedupe_key = null,
+  bank = null, direction = null,
+}) {
   const result = db.prepare(`
-    INSERT INTO transactions (amount, type, category, description, date, created_at, raw_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(amount, type, category, description || null, date, new Date().toISOString(), raw_message || null);
+    INSERT INTO transactions (
+      amount, type, category, description, date, created_at, raw_message,
+      source, status, merchant, account_masked, balance_after, occurred_at,
+      reference, dedupe_key, bank, direction
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    amount,
+    type,
+    category,
+    description || null,
+    date,
+    new Date().toISOString(),
+    raw_message || null,
+    source || null,
+    status || 'posted',
+    merchant || null,
+    account_masked || null,
+    balance_after != null ? balance_after : null,
+    occurred_at || null,
+    reference || null,
+    dedupe_key || null,
+    bank || null,
+    direction || null,
+  );
   return db.prepare('SELECT * FROM transactions WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function getTransactionById(id) {
+  return db.prepare('SELECT * FROM transactions WHERE id = ?').get(id) || null;
+}
+
+function getTransactionsByIds(ids) {
+  if (!ids?.length) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id, amount, type, category, description, date, occurred_at, merchant, account_masked, status, source
+     FROM transactions WHERE id IN (${placeholders})`
+  ).all(...ids);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids.map((id) => byId.get(id) || { id, missing: true });
 }
 
 // Sentinel pattern used by budget alert deduplication — never expose these
 const SENTINEL_FILTER = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')";
+// Reversed SMS debits stay in the table but must not keep counting as spend.
+const POSTED_FILTER = "AND COALESCE(status, 'posted') = 'posted'";
+const VISIBLE_FILTER = SENTINEL_FILTER + ' ' + POSTED_FILTER;
 
-function getTransactions({ month, category, type, limit = 500 } = {}) {
-  let query = `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER}`;
+function getTransactions({ month, category, type, limit = 500, includeReversed = false } = {}) {
+  const statusSql = includeReversed ? '' : ` ${POSTED_FILTER}`;
+  let query = `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER}${statusSql}`;
   const params = [];
   if (month)    { query += " AND strftime('%Y-%m', date) = ?"; params.push(month); }
   if (category) { query += ' AND category = ?'; params.push(category); }
@@ -217,7 +432,7 @@ function deleteTransaction(id) {
 
 function deleteLastTransaction() {
   const tx = db.prepare(
-    `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER} ORDER BY created_at DESC LIMIT 1`
+    `SELECT * FROM transactions WHERE 1=1 ${VISIBLE_FILTER} ORDER BY created_at DESC LIMIT 1`
   ).get();
   if (tx) db.prepare('DELETE FROM transactions WHERE id = ?').run(tx.id);
   return tx;
@@ -225,7 +440,7 @@ function deleteLastTransaction() {
 
 function getLastNTransactions(n = 5) {
   return db.prepare(
-    `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER} ORDER BY date DESC, created_at DESC LIMIT ?`
+    `SELECT * FROM transactions WHERE 1=1 ${VISIBLE_FILTER} ORDER BY date DESC, created_at DESC LIMIT ?`
   ).all(n);
 }
 
@@ -254,7 +469,7 @@ function getSummaryByMonth(month) {
   const rows = db.prepare(`
     SELECT type, category, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y-%m', date) = ? ${VISIBLE_FILTER}
     GROUP BY type, category
     ORDER BY total DESC
   `).all(month);
@@ -262,7 +477,7 @@ function getSummaryByMonth(month) {
   const counts = db.prepare(`
     SELECT type, COUNT(*) as cnt
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y-%m', date) = ? ${VISIBLE_FILTER}
     GROUP BY type
   `).all(month);
 
@@ -273,7 +488,7 @@ function getSummaryOverall() {
   const rows = db.prepare(`
     SELECT type, category, SUM(amount) as total
     FROM transactions
-    WHERE 1=1 ${SENTINEL_FILTER}
+    WHERE 1=1 ${VISIBLE_FILTER}
     GROUP BY type, category
     ORDER BY total DESC
   `).all();
@@ -281,7 +496,7 @@ function getSummaryOverall() {
   const counts = db.prepare(`
     SELECT type, COUNT(*) as cnt
     FROM transactions
-    WHERE 1=1 ${SENTINEL_FILTER}
+    WHERE 1=1 ${VISIBLE_FILTER}
     GROUP BY type
   `).all();
 
@@ -292,7 +507,7 @@ function getSummaryByYear(year) {
   const rows = db.prepare(`
     SELECT type, category, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY type, category
     ORDER BY total DESC
   `).all(year);
@@ -300,7 +515,7 @@ function getSummaryByYear(year) {
   const counts = db.prepare(`
     SELECT type, COUNT(*) as cnt
     FROM transactions
-    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY type
   `).all(year);
 
@@ -311,7 +526,7 @@ function getDailyTotals(month) {
   return db.prepare(`
     SELECT date, type, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y-%m', date) = ? ${VISIBLE_FILTER}
     GROUP BY date, type
     ORDER BY date ASC
   `).all(month);
@@ -321,7 +536,7 @@ function getMonthlyTrends(months = 6) {
   return db.prepare(`
     SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
     FROM transactions
-    WHERE date >= date('now', '-' || ? || ' months') ${SENTINEL_FILTER}
+    WHERE date >= date('now', '-' || ? || ' months') ${VISIBLE_FILTER}
     GROUP BY month, type
     ORDER BY month ASC
   `).all(months);
@@ -364,13 +579,13 @@ function getCategoryUsage(id) {
   const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
   if (!cat) return null;
   const txCount = db.prepare(
-    `SELECT COUNT(*) as cnt FROM transactions WHERE category = ? ${SENTINEL_FILTER}`
+    `SELECT COUNT(*) as cnt FROM transactions WHERE category = ? ${VISIBLE_FILTER}`
   ).get(cat.name).cnt;
   const budgetCount = db.prepare(
     'SELECT COUNT(*) as cnt FROM budgets WHERE category = ?'
   ).get(cat.name).cnt;
   const recentTx = db.prepare(
-    `SELECT date, amount, type, description FROM transactions WHERE category = ? ${SENTINEL_FILTER} ORDER BY date DESC, created_at DESC LIMIT 5`
+    `SELECT date, amount, type, description FROM transactions WHERE category = ? ${VISIBLE_FILTER} ORDER BY date DESC, created_at DESC LIMIT 5`
   ).all(cat.name);
   return { cat, txCount, budgetCount, recentTx };
 }
@@ -399,6 +614,7 @@ function getBudgetsWithSpend(month) {
     LEFT JOIN transactions t
       ON t.category = b.category
       AND strftime('%Y-%m', t.date) = ?
+      AND COALESCE(t.status, 'posted') = 'posted'
     GROUP BY b.id
     ORDER BY b.category ASC
   `).all(month);
@@ -434,6 +650,7 @@ function checkBudgetAlert(category, month) {
     SELECT COALESCE(SUM(amount), 0) as spent
     FROM transactions
     WHERE category = ? AND type = 'expense' AND strftime('%Y-%m', date) = ?
+      AND COALESCE(status, 'posted') = 'posted'
   `).get(category, month);
 
   const pct = spent / budget.monthly_limit;
@@ -466,7 +683,7 @@ function getYearlyOverview(year) {
   const monthlyRows = db.prepare(`
     SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY month, type
     ORDER BY month ASC
   `).all(year);
@@ -474,7 +691,7 @@ function getYearlyOverview(year) {
   const categoryRows = db.prepare(`
     SELECT strftime('%Y-%m', date) as month, type, category, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y', date) = ? ${SENTINEL_FILTER}
+    WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY month, type, category
     ORDER BY month ASC
   `).all(year);
@@ -531,7 +748,7 @@ function getCategoryTrends(category, months = 6) {
   return db.prepare(`
     SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
     FROM transactions
-    WHERE category = ? AND date >= date('now', '-' || ? || ' months') ${SENTINEL_FILTER}
+    WHERE category = ? AND date >= date('now', '-' || ? || ' months') ${VISIBLE_FILTER}
     GROUP BY month
     ORDER BY month ASC
   `).all(category, months);
@@ -571,7 +788,7 @@ function deleteSavingsGoal(id) {
 // ─── Portfolio / Investment tracking ──────────────────────────────────────────
 
 function getPortfolioSummary() {
-  const SENTINEL = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')";
+  const SENTINEL = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%') AND COALESCE(status, 'posted') = 'posted'";
 
   // Money put INTO investments (type = 'investment')
   const investRows = db.prepare(`
@@ -589,6 +806,7 @@ function getPortfolioSummary() {
     INNER JOIN categories c ON c.name = t.category AND c.is_return = 1
     WHERE t.type = 'income'
       AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
+      AND COALESCE(t.status, 'posted') = 'posted'
     GROUP BY t.category
     ORDER BY total DESC
   `).all();
@@ -604,6 +822,7 @@ function getPortfolioSummary() {
       OR (t.type = 'income' AND c.is_return = 1)
     )
     AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
+    AND COALESCE(t.status, 'posted') = 'posted'
     ORDER BY t.date DESC, t.created_at DESC
     LIMIT 50
   `).all();
@@ -617,6 +836,7 @@ function getPortfolioSummary() {
     LEFT JOIN categories c ON c.name = t.category
     WHERE (t.type = 'investment' OR (t.type = 'income' AND c.is_return = 1))
       AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
+      AND COALESCE(t.status, 'posted') = 'posted'
       AND t.date >= date('now', '-24 months')
     GROUP BY month
     ORDER BY month ASC
@@ -634,27 +854,45 @@ function getPortfolioSummary() {
 
 function getFullBackup() {
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     transactions: db.prepare(
       `SELECT * FROM transactions WHERE 1=1 ${SENTINEL_FILTER} ORDER BY date ASC, created_at ASC`
     ).all(),
     categories: db.prepare('SELECT * FROM categories ORDER BY id ASC').all(),
     budgets:    db.prepare('SELECT * FROM budgets ORDER BY id ASC').all(),
+    category_rules: db.prepare('SELECT * FROM category_rules ORDER BY id ASC').all(),
+    sms_raw: db.prepare('SELECT * FROM sms_raw ORDER BY id ASC').all(),
+    sms_reversals: db.prepare('SELECT * FROM sms_reversals ORDER BY id ASC').all(),
   };
 }
 
-function restoreFromBackup({ transactions = [], categories = [], budgets = [] }) {
+function restoreFromBackup({
+  transactions = [], categories = [], budgets = [],
+  category_rules = [], sms_raw = [], sms_reversals = [],
+}) {
   let txInserted = 0, catInserted = 0, budgetInserted = 0;
 
   db.transaction(() => {
     const insertTx = db.prepare(`
-      INSERT OR IGNORE INTO transactions
-        (id, amount, type, category, description, date, created_at, raw_message)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO transactions (
+        id, amount, type, category, description, date, created_at, raw_message,
+        source, status, merchant, account_masked, balance_after, occurred_at,
+        reference, dedupe_key, bank, direction,
+        note, note_reviewed, telegram_notify_message_id,
+        category_reply_pending, category_prompt_options, category_prompt_message_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const t of transactions) {
-      insertTx.run(t.id, t.amount, t.type, t.category, t.description, t.date, t.created_at, t.raw_message);
+      insertTx.run(
+        t.id, t.amount, t.type, t.category, t.description, t.date, t.created_at, t.raw_message,
+        t.source ?? null, t.status || 'posted', t.merchant ?? null, t.account_masked ?? null,
+        t.balance_after ?? null, t.occurred_at ?? null, t.reference ?? null, t.dedupe_key ?? null,
+        t.bank ?? null, t.direction ?? null,
+        t.note ?? null, t.note_reviewed ? 1 : 0, t.telegram_notify_message_id ?? null,
+        t.category_reply_pending ? 1 : 0, t.category_prompt_options ?? null,
+        t.category_prompt_message_id ?? null,
+      );
       txInserted++;
     }
 
@@ -675,9 +913,275 @@ function restoreFromBackup({ transactions = [], categories = [], budgets = [] })
       insertBudget.run(b.id, b.category, b.monthly_limit, b.created_at);
       budgetInserted++;
     }
+
+    const insertRule = db.prepare(`
+      INSERT OR IGNORE INTO category_rules (id, pattern, category, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    for (const rule of category_rules) {
+      insertRule.run(rule.id, rule.pattern, rule.category, rule.created_at);
+    }
+
+    const insertRaw = db.prepare(`
+      INSERT OR IGNORE INTO sms_raw (id, text, received_at, parsed, parser_match, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const row of sms_raw) {
+      insertRaw.run(row.id, row.text, row.received_at, row.parsed ? 1 : 0, row.parser_match || null, row.created_at);
+    }
+
+    const insertReversal = db.prepare(`
+      INSERT OR IGNORE INTO sms_reversals (
+        id, sms_raw_id, dedupe_key, status, transaction_id, candidate_ids,
+        bank, merchant, amount, account_masked, reference, occurred_at,
+        raw_text, parser_match, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const row of sms_reversals) {
+      insertReversal.run(
+        row.id, row.sms_raw_id ?? null, row.dedupe_key ?? null, row.status, row.transaction_id ?? null,
+        row.candidate_ids ?? null, row.bank ?? null, row.merchant ?? null, row.amount ?? null,
+        row.account_masked ?? null, row.reference ?? null, row.occurred_at ?? null,
+        row.raw_text, row.parser_match ?? null, row.created_at,
+      );
+    }
   })();
 
   return { txInserted, catInserted, budgetInserted };
+}
+
+// ─── SMS ingest ───────────────────────────────────────────────────────────────
+
+function insertSmsRaw({ text, received_at, parsed, parser_match }) {
+  const info = db.prepare(`
+    INSERT INTO sms_raw (text, received_at, parsed, parser_match, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(text, received_at, parsed ? 1 : 0, parser_match || null, new Date().toISOString());
+  return db.prepare('SELECT * FROM sms_raw WHERE id = ?').get(info.lastInsertRowid);
+}
+
+function getSmsRaw(id) {
+  return db.prepare('SELECT * FROM sms_raw WHERE id = ?').get(id) || null;
+}
+
+function findTransactionByDedupeKey(dedupeKey) {
+  if (!dedupeKey) return null;
+  return db.prepare('SELECT * FROM transactions WHERE dedupe_key = ?').get(dedupeKey) || null;
+}
+
+function findSmsReversalByDedupeKey(dedupeKey) {
+  if (!dedupeKey) return null;
+  return db.prepare('SELECT * FROM sms_reversals WHERE dedupe_key = ?').get(dedupeKey) || null;
+}
+
+function amountsMatch(left, right) {
+  return Math.round(Number(left) * 100) === Math.round(Number(right) * 100);
+}
+
+function findSmsDebitCandidates({ account_masked, status, merchant, amount }) {
+  const rows = db.prepare(`
+    SELECT * FROM transactions
+    WHERE source = 'sms'
+      AND status = ?
+      AND account_masked = ?
+      AND direction = 'debit'
+    ORDER BY date ASC, id ASC
+  `).all(status, account_masked);
+  const merchantKey = merchant ? String(merchant).toUpperCase() : null;
+  return rows.filter((row) => {
+    if (!amountsMatch(row.amount, amount)) return false;
+    if (merchantKey && String(row.merchant || '').toUpperCase() !== merchantKey) return false;
+    return true;
+  });
+}
+
+function rememberReference(transactionId, reference) {
+  if (!transactionId || !reference) return;
+  db.prepare(`
+    UPDATE transactions
+    SET reference = COALESCE(NULLIF(reference, ''), ?)
+    WHERE id = ?
+  `).run(reference, transactionId);
+}
+
+function insertSmsReversal({
+  sms_raw_id, dedupe_key, status, transaction_id = null, set_reversed = false,
+  candidate_ids = null, bank = null, merchant = null, amount = null,
+  account_masked = null, reference = null, occurred_at = null, raw_text, parser_match = null,
+}) {
+  const insert = db.prepare(`
+    INSERT INTO sms_reversals (
+      sms_raw_id, dedupe_key, status, transaction_id, candidate_ids,
+      bank, merchant, amount, account_masked, reference, occurred_at,
+      raw_text, parser_match, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const markReversed = db.prepare(
+    `UPDATE transactions SET status = 'reversed' WHERE id = ? AND status = 'posted'`
+  );
+
+  return db.transaction(() => {
+    if (set_reversed) {
+      const updated = markReversed.run(transaction_id);
+      if (updated.changes !== 1) {
+        const err = new Error('debit_not_posted');
+        err.code = 'DEBIT_NOT_POSTED';
+        throw err;
+      }
+    }
+    if (transaction_id) rememberReference(transaction_id, reference);
+    const info = insert.run(
+      sms_raw_id,
+      dedupe_key,
+      status,
+      transaction_id,
+      candidate_ids ? JSON.stringify(candidate_ids) : null,
+      bank,
+      merchant,
+      amount,
+      account_masked,
+      reference,
+      occurred_at,
+      raw_text,
+      parser_match,
+      new Date().toISOString(),
+    );
+    return db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(info.lastInsertRowid);
+  })();
+}
+
+function listOpenSmsReviews() {
+  return db.prepare(
+    `SELECT * FROM sms_reversals WHERE status = 'needs_review' ORDER BY created_at ASC, id ASC`
+  ).all();
+}
+
+function getSmsReversal(id) {
+  return db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(id) || null;
+}
+
+function listSmsReversalsForTransaction(transactionId) {
+  return db.prepare(
+    'SELECT * FROM sms_reversals WHERE transaction_id = ? ORDER BY id ASC'
+  ).all(transactionId);
+}
+
+function resolveSmsReview(reviewId, transactionId) {
+  return db.transaction(() => {
+    const review = db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(reviewId);
+    if (!review) return { error: 'not_found' };
+    if (review.status !== 'needs_review') return { error: 'not_open', review };
+    let ids = [];
+    try { ids = JSON.parse(review.candidate_ids || '[]'); } catch { ids = []; }
+    if (!ids.includes(transactionId)) return { error: 'not_candidate', review };
+    const tx = db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId);
+    if (!tx || tx.source !== 'sms') return { error: 'not_candidate', review };
+    if (tx.status === 'posted') {
+      const updated = db.prepare(
+        `UPDATE transactions SET status = 'reversed' WHERE id = ? AND status = 'posted'`
+      ).run(transactionId);
+      if (updated.changes !== 1) return { error: 'not_posted', review };
+    } else if (tx.status !== 'reversed') {
+      return { error: 'not_posted', review };
+    }
+    rememberReference(transactionId, review.reference);
+    db.prepare(
+      `UPDATE sms_reversals SET status = 'linked', transaction_id = ? WHERE id = ?`
+    ).run(transactionId, reviewId);
+    return {
+      review: db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(reviewId),
+      transaction: db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId),
+    };
+  })();
+}
+
+function closeDb() {
+  db.close();
+}
+
+function updateSmsExpense(id, fields) {
+  const tx = getTransactionById(id);
+  if (!tx) return null;
+  const next = { ...tx, ...fields };
+  db.prepare(`
+    UPDATE transactions
+    SET category = ?,
+        note = ?,
+        note_reviewed = ?,
+        telegram_notify_message_id = ?,
+        category_reply_pending = ?,
+        category_prompt_options = ?,
+        category_prompt_message_id = ?
+    WHERE id = ?
+  `).run(
+    next.category,
+    next.note ?? null,
+    next.note_reviewed ? 1 : 0,
+    next.telegram_notify_message_id ?? null,
+    next.category_reply_pending ? 1 : 0,
+    next.category_prompt_options ?? null,
+    next.category_prompt_message_id ?? null,
+    id,
+  );
+  return getTransactionById(id);
+}
+
+function findSmsExpenseByNotifyMessageId(messageId) {
+  if (messageId == null) return null;
+  return db.prepare(`
+    SELECT * FROM transactions
+    WHERE source = 'sms'
+      AND (telegram_notify_message_id = ? OR category_prompt_message_id = ?)
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(messageId, messageId) || null;
+}
+
+function isMerchantMuted(merchant) {
+  const key = String(merchant || '').trim().toUpperCase();
+  if (!key) return false;
+  return Boolean(db.prepare('SELECT 1 FROM muted_merchants WHERE merchant = ?').get(key));
+}
+
+function muteMerchant(merchant) {
+  const key = String(merchant || '').trim().toUpperCase();
+  if (!key) return null;
+  db.prepare(`
+    INSERT INTO muted_merchants (merchant, muted_at) VALUES (?, ?)
+    ON CONFLICT(merchant) DO UPDATE SET muted_at = excluded.muted_at
+  `).run(key, new Date().toISOString());
+  return db.prepare('SELECT * FROM muted_merchants WHERE merchant = ?').get(key);
+}
+
+function getNoteStreak(merchant) {
+  const key = String(merchant || '').trim().toUpperCase();
+  return db.prepare('SELECT * FROM merchant_note_streaks WHERE merchant = ?').get(key)
+    || { merchant: key, reset_after_tx_id: 0, last_suggested_tx_id: null };
+}
+
+function setNoteStreak(merchant, { reset_after_tx_id, last_suggested_tx_id } = {}) {
+  const key = String(merchant || '').trim().toUpperCase();
+  const current = getNoteStreak(key);
+  const reset = reset_after_tx_id != null ? reset_after_tx_id : current.reset_after_tx_id;
+  const suggested = last_suggested_tx_id !== undefined ? last_suggested_tx_id : current.last_suggested_tx_id;
+  db.prepare(`
+    INSERT INTO merchant_note_streaks (merchant, reset_after_tx_id, last_suggested_tx_id)
+    VALUES (?, ?, ?)
+    ON CONFLICT(merchant) DO UPDATE SET
+      reset_after_tx_id = excluded.reset_after_tx_id,
+      last_suggested_tx_id = excluded.last_suggested_tx_id
+  `).run(key, reset || 0, suggested ?? null);
+  return getNoteStreak(key);
+}
+
+function recentSmsDebits(merchant, afterId = 0, limit = 3) {
+  const key = String(merchant || '').trim().toUpperCase();
+  return db.prepare(`
+    SELECT * FROM transactions
+    WHERE source = 'sms' AND direction = 'debit' AND merchant = ? AND id > ?
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(key, afterId || 0, limit);
 }
 
 module.exports = {
@@ -714,4 +1218,28 @@ module.exports = {
   restoreFromBackup,
   getPortfolioSummary,
   getDbInfo,
+  getTransactionById,
+  getTransactionsByIds,
+  insertSmsRaw,
+  getSmsRaw,
+  findTransactionByDedupeKey,
+  findSmsReversalByDedupeKey,
+  findSmsDebitCandidates,
+  insertSmsReversal,
+  listOpenSmsReviews,
+  getSmsReversal,
+  listSmsReversalsForTransaction,
+  resolveSmsReview,
+  closeDb,
+  matchCategoryRule,
+  resolveCategory,
+  upsertCategoryRule,
+  listCategoriesInUse,
+  updateSmsExpense,
+  findSmsExpenseByNotifyMessageId,
+  isMerchantMuted,
+  muteMerchant,
+  getNoteStreak,
+  setNoteStreak,
+  recentSmsDebits,
 };

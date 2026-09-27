@@ -187,4 +187,18 @@ async function parseImageMessage(imageBuffer, mimeType, categories) {
   return safeParseJSON(raw, 'image');
 }
 
-module.exports = { parseTextMessage, parseImageMessage, buildSystemPrompt };
+async function completeJsonChat({ kind, system, user, maxTokens = 80, meta = {} }) {
+  const completion = await callChatCompletion(kind, {
+    model: GROQ_TEXT_MODEL,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0,
+    max_tokens: maxTokens,
+  }, meta);
+  return completion.choices?.[0]?.message?.content || '';
+}
+
+module.exports = { parseTextMessage, parseImageMessage, buildSystemPrompt, completeJsonChat, extractJSON };

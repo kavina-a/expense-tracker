@@ -179,6 +179,7 @@ async function handleTransaction(parsed, rawText, today, thisMonth, sender, chan
     description: parsed.description || null,
     date:        parsed.date || today,
     raw_message: rawText,
+    source:      channel === 'telegram' || channel === 'whatsapp' ? channel : null,
   });
 
   log('info', 'Handler', 'transaction_logged', {
