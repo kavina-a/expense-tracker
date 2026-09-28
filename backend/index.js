@@ -5,9 +5,9 @@ const path     = require('path');
 const db       = require('./db');
 const { sendMessage: waSend, sendChartImage: waSendChart, downloadMedia: waDownload } = require('./whatsapp');
 const tg       = require('./telegram');
-const { processMessage } = require('./handler');
+const { processMessage, clearPending } = require('./handler');
 const { mountSmsRoutes } = require('./sms/http');
-const { handleSmsCallback, handleSmsTextReply } = require('./sms/telegramNotify');
+const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./sms/telegramNotify');
 
 const app = express();
 app.use(express.json());
@@ -131,6 +131,7 @@ app.post('/telegram', async (req, res) => {
 
     if (callback) {
       await handleSmsCallback(callback);
+      clearPending('telegram', chatId);
       return;
     }
 
@@ -138,7 +139,10 @@ app.post('/telegram', async (req, res) => {
 
     if (message.reply_to_message && message.text?.trim()) {
       const smsReply = await handleSmsTextReply(message);
-      if (smsReply) return;
+      if (smsReply) {
+        clearPending('telegram', chatId);
+        return;
+      }
     }
 
     console.log(`[Telegram] Message from chat ${chatId}: type=${message.photo ? 'image' : 'text'}`);
@@ -157,6 +161,16 @@ app.post('/telegram', async (req, res) => {
     } else if (message.text) {
       const text = message.text.trim();
       if (!text) return;
+      const dismissed = await handleSmsDismissal(message);
+      if (dismissed) {
+        clearPending('telegram', chatId);
+        return;
+      }
+      const smsNote = await handleSmsLooseNote(message);
+      if (smsNote) {
+        clearPending('telegram', chatId);
+        return;
+      }
       await processMessage({ type: 'text', text, rawText: text, channel: 'telegram', chatId }, tgSender);
     } else {
       await tg.sendMessage(chatId, 'I can only process text messages and receipt images.');

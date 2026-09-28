@@ -89,24 +89,50 @@ const reversalAlert = {
   },
 };
 
+function creditFields(match) {
+  const [, amount, account, day, month, year, time, reason, balance] = match;
+  return { amount, account, day, month, year, time, reason: String(reason).trim(), balance };
+}
+
+const interestCredit = {
+  name: 'hnb_interest_credit',
+  parse(text) {
+    const match = CREDIT_RE.exec(text);
+    if (!match) return null;
+    const fields = creditFields(match);
+    if (!/Int\.Pd/i.test(fields.reason)) return null;
+    const row = parsed({
+      type: 'ignore',
+      account_masked: canonicalizeAccount(fields.account),
+      merchant: null,
+      amount: parseAmount(fields.amount),
+      direction: 'credit',
+      balance_after: parseAmount(fields.balance),
+      occurred_at: occurredAt(fields.day, fields.month, expandYear(fields.year), fields.time),
+      reference: fields.reason,
+    });
+    return row ? { ...row, ignore_reason: 'interest' } : null;
+  },
+};
+
 const creditConfirmation = {
   name: 'hnb_credit_confirmation',
   parse(text) {
     const match = CREDIT_RE.exec(text);
     if (!match) return null;
-    const [, amount, account, day, month, year, time, reason, balance] = match;
-    const reference = String(reason).trim();
+    const fields = creditFields(match);
+    const reference = fields.reason;
     // Only the reversal companion ("...REV...") — other credits stay unparsed
     // until a dedicated matcher exists, so they are not booked as income.
     if (!/REV/i.test(reference)) return null;
     return parsed({
       type: 'credit_confirmation',
-      account_masked: canonicalizeAccount(account),
+      account_masked: canonicalizeAccount(fields.account),
       merchant: null,
-      amount: parseAmount(amount),
+      amount: parseAmount(fields.amount),
       direction: 'credit',
-      balance_after: parseAmount(balance),
-      occurred_at: occurredAt(day, month, expandYear(year), time),
+      balance_after: parseAmount(fields.balance),
+      occurred_at: occurredAt(fields.day, fields.month, expandYear(fields.year), fields.time),
       reference,
     });
   },
@@ -114,6 +140,6 @@ const creditConfirmation = {
 
 module.exports = {
   id: 'hnb',
-  matchers: [purchaseAlert, reversalAlert, creditConfirmation],
+  matchers: [purchaseAlert, reversalAlert, interestCredit, creditConfirmation],
   normalizeMerchant,
 };

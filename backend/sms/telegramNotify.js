@@ -28,7 +28,7 @@ function expenseMessage(tx) {
   } else {
     lines.push(escapeHtml(tx.category));
   }
-  lines.push('Reply to this message to add a note.');
+  lines.push('Send a message to add a note.');
   return lines.join('\n');
 }
 
@@ -45,8 +45,20 @@ function keyboardFor(tx, categories) {
     rows.push([{ text: 'Other', callback_data: `s:o:${tx.id}` }]);
     rows.push([{ text: 'Uncategorized', callback_data: `s:u:${tx.id}` }]);
   }
-  rows.push([{ text: '👍 No note needed', callback_data: `s:n:${tx.id}` }]);
+  rows.push([
+    { text: '👍 No note needed', callback_data: `s:n:${tx.id}` },
+    { text: 'Ignore', callback_data: `s:i:${tx.id}` },
+  ]);
   return { inline_keyboard: rows };
+}
+
+function futureIgnoreKeyboard(txId) {
+  return {
+    inline_keyboard: [[
+      { text: 'Yes, ignore them', callback_data: `s:g:${txId}:1` },
+      { text: 'Just this one', callback_data: `s:g:${txId}:0` },
+    ]],
+  };
 }
 
 function muteKeyboard(txId) {
@@ -144,6 +156,33 @@ async function handleSmsCallback(query, deps = {}) {
   const chatId = query.message?.chat?.id || chatIdFrom(deps);
   const send = sender({ ...deps, chatId });
 
+  if (kind === 'i') {
+    const updated = db.ignoreSmsExpense(tx.id);
+    await clearKeyboard(query, deps);
+    if (chatId) {
+      await send(chatId, 'Ignored. It won’t count.');
+      if (tx.merchant && !db.isMerchantIgnored(tx.merchant)) {
+        await send(
+          chatId,
+          `Ignore future charges from ${escapeHtml(tx.merchant)}?`,
+          { reply_markup: futureIgnoreKeyboard(tx.id) },
+        );
+      }
+    }
+    return { handled: true, action: 'ignored', transaction: updated };
+  }
+
+  if (kind === 'g') {
+    await clearKeyboard(query, deps);
+    if (extra === '1' && tx.merchant) {
+      db.ignoreMerchant(tx.merchant);
+      if (chatId) await send(chatId, `Future charges from ${escapeHtml(tx.merchant)} will be ignored.`);
+      return { handled: true, action: 'merchant_ignored', transaction: tx };
+    }
+    if (chatId) await send(chatId, 'Only this one was ignored.');
+    return { handled: true, action: 'ignore_once', transaction: tx };
+  }
+
   if (kind === 'n') {
     db.updateSmsExpense(tx.id, { note_reviewed: 1 });
     const updated = db.getTransactionById(tx.id);
@@ -200,6 +239,88 @@ async function handleSmsCallback(query, deps = {}) {
   return { handled: true, action: 'ignored' };
 }
 
+function textHasAmount(text) {
+  return /\d/.test(text);
+}
+
+function isNoteDismissal(text) {
+  const normalized = String(text || '')
+    .toLowerCase()
+    .replace(/👍/g, '')
+    .replace(/[!.]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return [
+    'no note needed',
+    'no note',
+    'note not needed',
+    'dont need a note',
+    "don't need a note",
+    'nothing to add',
+    'skip note',
+  ].includes(normalized);
+}
+
+function waitingLabel(rows) {
+  return rows
+    .map((row) => `${row.merchant || 'Purchase'} ${Number(row.amount).toFixed(2)}`)
+    .join(', ');
+}
+
+async function handleSmsDismissal(message, deps = {}) {
+  const text = String(message?.text || '').trim();
+  if (!isNoteDismissal(text)) return false;
+
+  const chatId = message.chat?.id || chatIdFrom(deps);
+  const send = sender({ ...deps, chatId });
+  const waiting = db.listSmsExpensesAwaitingNote(deps.noteWindowMs);
+  if (!waiting.length) {
+    if (chatId) await send(chatId, 'No note needed.');
+    return { handled: true, action: 'note_reviewed', transaction: null };
+  }
+
+  const updated = [];
+  for (const tx of waiting) {
+    db.updateSmsExpense(tx.id, { note_reviewed: 1 });
+    const row = db.getTransactionById(tx.id);
+    updated.push(row);
+    await maybeSuggestMute(row, { ...deps, chatId });
+  }
+  if (chatId) {
+    await send(chatId, `No note needed on ${escapeHtml(waitingLabel(waiting))}.`);
+  }
+  return { handled: true, action: 'note_reviewed', transaction: updated[0], transactions: updated };
+}
+
+async function handleSmsLooseNote(message, deps = {}) {
+  const text = String(message?.text || '').trim();
+  if (!text || message?.reply_to_message || textHasAmount(text) || isNoteDismissal(text)) return false;
+
+  const open = db.listSmsExpensesAwaitingNote(deps.noteWindowMs);
+  const recent = db.listRecentSmsWithoutNote(deps.noteWindowMs);
+  if (!recent.length) return false;
+
+  const chatId = message.chat?.id || chatIdFrom(deps);
+  const send = sender({ ...deps, chatId });
+  // Several cards are still waiting. Don't guess, and don't ask for a price.
+  if (open.length > 1) {
+    if (chatId) {
+      await send(
+        chatId,
+        `Reply to the charge this note is for. Waiting: ${escapeHtml(waitingLabel(open))}.`,
+      );
+    }
+    return { handled: true, action: 'choose', transactions: open };
+  }
+
+  // Newest charge with an empty note, including one just marked "no note needed".
+  // A comment after that card is the note. The SMS already has the amount.
+  const tx = recent[0];
+  const updated = db.updateSmsExpense(tx.id, { note: text });
+  if (chatId) await send(chatId, `Note saved on ${escapeHtml(tx.merchant)}.`);
+  return { handled: true, action: 'note', transaction: updated };
+}
+
 async function handleSmsTextReply(message, deps = {}) {
   const replyId = message?.reply_to_message?.message_id;
   const text = String(message?.text || '').trim();
@@ -226,6 +347,8 @@ module.exports = {
   notifySmsExpense,
   handleSmsCallback,
   handleSmsTextReply,
+  handleSmsLooseNote,
+  handleSmsDismissal,
   expenseMessage,
   streakWarrantsMute,
 };

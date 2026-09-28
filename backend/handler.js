@@ -365,4 +365,4 @@ async function handleQuery(parsed, today, thisMonth, sender, channel) {
   }
 }
 
-module.exports = { processMessage };
+module.exports = { processMessage, clearPending };

@@ -1,6 +1,7 @@
 const db = require('../db');
 const { log, preview } = require('../logger');
 const { parseSms } = require('./parsers');
+const { canonicalizeAccount, accountTokensIn } = require('./account');
 const { resolveSmsCategory, guessMerchantCategory } = require('./categorize');
 const { notifySmsExpense } = require('./telegramNotify');
 
@@ -56,6 +57,54 @@ function hydrateReversal(row) {
     raw_text: row.raw_text,
     created_at: row.created_at,
     candidates: db.getTransactionsByIds(ids).map(candidateView),
+  };
+}
+
+function rememberAccounts(accounts, bank = 'hnb') {
+  for (const account of accounts) {
+    if (account) db.rememberOwnAccount(account, bank);
+  }
+}
+
+function mentionsOwnAccount(merchant) {
+  for (const account of accountTokensIn(merchant)) {
+    if (db.isOwnAccount(account)) return true;
+  }
+  const direct = canonicalizeAccount(merchant);
+  return Boolean(direct && db.isOwnAccount(direct));
+}
+
+function ownTransfer(text) {
+  const accounts = accountTokensIn(text);
+  if (accounts.length < 2) return null;
+  if (!accounts.every((account) => db.isOwnAccount(account))) return null;
+  return {
+    bank: 'hnb',
+    type: 'ignore',
+    ignore_reason: 'own_transfer',
+    account_masked: accounts[0],
+    merchant: null,
+    amount: null,
+    direction: null,
+    balance_after: null,
+    occurred_at: null,
+    reference: accounts.join(','),
+    parser_match: 'hnb_own_transfer',
+  };
+}
+
+function ignoredResult(raw, parsed, reason) {
+  const label = reason === 'interest'
+    ? 'Interest credit ignored. Not an expense.'
+    : reason === 'merchant'
+      ? `Charges from ${parsed.merchant} are ignored.`
+      : 'Transfer between your own accounts ignored. Not an expense.';
+  log('info', 'SmsIngest', 'ignored', { sms_raw_id: raw.id, reason, account: parsed.account_masked });
+  return {
+    ...baseResult(raw, parsed),
+    action: 'ignored',
+    ignore_reason: reason,
+    message: label,
   };
 }
 
@@ -244,6 +293,13 @@ async function insertPurchase(parsed, raw, key, text, options = {}) {
     );
   }
 
+  if (mentionsOwnAccount(parsed.merchant)) {
+    return ignoredResult(raw, { ...parsed, ignore_reason: 'own_transfer' }, 'own_transfer');
+  }
+  if (db.isMerchantIgnored(parsed.merchant)) {
+    return ignoredResult(raw, { ...parsed, ignore_reason: 'merchant' }, 'merchant');
+  }
+
   const guess = options.guessCategory === undefined ? guessMerchantCategory : options.guessCategory;
   const resolved = await resolveSmsCategory(parsed.merchant, guess);
   const category = resolved.category;
@@ -311,13 +367,20 @@ function duplicateReversal(raw, parsed, row) {
 
 async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, chatId, sendMessage } = {}) {
   const received_at = receivedAt || new Date().toISOString();
-  const parsed = parseSms(text);
+  let parsed = parseSms(text);
+  if (parsed?.account_masked) rememberAccounts([parsed.account_masked], parsed.bank);
+  if (!parsed) parsed = ownTransfer(text);
+
   const raw = db.insertSmsRaw({
     text,
     received_at,
     parsed: Boolean(parsed),
     parser_match: parsed ? parsed.parser_match : null,
   });
+
+  if (parsed?.type === 'ignore') {
+    return ignoredResult(raw, parsed, parsed.ignore_reason || 'ignored');
+  }
 
   if (!parsed) {
     log('warn', 'SmsIngest', 'unparsed', { sms_raw_id: raw.id, preview: preview(text, 140) });

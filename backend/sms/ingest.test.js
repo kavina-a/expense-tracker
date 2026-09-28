@@ -167,6 +167,45 @@ describe('SMS ingest', () => {
     assert.equal(db.getTransactions({ includeReversed: true, limit: 1000 }).length, before);
   });
 
+  it('ignores interest credits and transfers between accounts it has already seen', async () => {
+    const before = db.getTransactions({ includeReversed: true, limit: 1000 }).length;
+    const interestA = await ingest({
+      text: 'LKR 103.49 credited to Ac No:20802XXXXX64 on 27/09/26 21:24:32 Reason:20802XXXXX64:Int.Pd: 31-08-2026 to 27-09-2026 Bal:LKR 97,140.60',
+    });
+    const interestB = await ingest({
+      text: 'LKR 13.16 credited to Ac No:20802XXXXX39 on 27/09/26 21:40:31 Reason:20802XXXXX39:Int.Pd: 31-08-2026 to 27-09-2026 Bal:LKR 11,772.25',
+    });
+    assert.equal(interestA.action, 'ignored');
+    assert.equal(interestA.ignore_reason, 'interest');
+    assert.equal(interestB.action, 'ignored');
+    assert.equal(db.isOwnAccount('2080***64'), true);
+    assert.equal(db.isOwnAccount('2080***39'), true);
+
+    const transfer = await ingest({
+      text: 'LKR 5000.00 debited from Ac No:20802XXXXX39 on 28/09/26 10:00:00 Reason:20802XXXXX64 Bal:LKR 6,772.25',
+    });
+    assert.equal(transfer.action, 'ignored');
+    assert.equal(transfer.ignore_reason, 'own_transfer');
+    assert.equal(db.getTransactions({ includeReversed: true, limit: 1000 }).length, before);
+  });
+
+  it('ignores a debit whose payee is another of your HNB accounts', async () => {
+    db.rememberOwnAccount('2080***77', 'hnb');
+    const before = db.getTransactions({ includeReversed: true, limit: 1000 }).length;
+    const result = await ingest({
+      text: 'SMS ALERT:INTERNET, Account:2080***2939,Location:208099988877, LK,Amount(Approx.):5000.00 LKR,Av.Bal:1000.00 LKR,Date:28.09.26,Time:10:15, Hot Line:0112462462',
+    });
+    assert.equal(result.action, 'ignored');
+    assert.equal(result.ignore_reason, 'own_transfer');
+    assert.equal(db.getTransactions({ includeReversed: true, limit: 1000 }).length, before);
+
+    db.rememberOwnAccount('2080***11', 'hnb');
+    db.rememberOwnAccount('2080***22', 'hnb');
+    const moved = await ingest({ text: 'Moved 208011111111 to 208022222222' });
+    assert.equal(moved.action, 'ignored');
+    assert.equal(moved.ignore_reason, 'own_transfer');
+  });
+
   it('links a credit confirmation that arrives before the reversal alert', async () => {
     const purchase = await ingest({
       text: 'SMS ALERT:INTERNET, Account:2080***2939,Location:UBER, LK,Amount(Approx.):88.00 LKR,Av.Bal:50.00 LKR,Date:10.08.26,Time:12:00, Hot Line:0112462462',

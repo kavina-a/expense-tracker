@@ -64,6 +64,15 @@ describe('HNB parser', () => {
     assert.equal(parseSms(text).merchant, 'UBER EATS');
   });
 
+  it('ignores an interest credit', () => {
+    const text = 'LKR 103.49 credited to Ac No:20802XXXXX64 on 27/09/26 21:24:32 Reason:20802XXXXX64:Int.Pd: 31-08-2026 to 27-09-2026 Bal:LKR 97,140.60 Protect from scams';
+    const parsed = parseSms(text);
+    assert.equal(parsed.type, 'ignore');
+    assert.equal(parsed.ignore_reason, 'interest');
+    assert.equal(parsed.account_masked, '2080***64');
+    assert.equal(cents(parsed.amount), 10349);
+  });
+
   it('does not treat a non-reversal credit as a reversal', () => {
     const text = 'LKR 5000.00 credited to Ac No:20802XXXXX39 on 27/09/26 05:54:22 Reason:SALARY Bal:LKR 11,762.17';
     assert.equal(parseSms(text), null);

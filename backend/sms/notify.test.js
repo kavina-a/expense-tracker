@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 const db = require('../db');
 const { ingestSmsText } = require('./ingest');
 const { interpretCategoryGuess } = require('./categorize');
-const { handleSmsCallback, handleSmsTextReply } = require('./telegramNotify');
+const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./telegramNotify');
 
 function purchase({ merchant, amount, time }) {
   return `SMS ALERT:INTERNET, Account:2080***2939,Location:${merchant}, LK,Amount(Approx.):${amount} LKR,Av.Bal:15184.20 LKR,Date:25.09.26,Time:${time}, Hot Line:0112462462`;
@@ -112,9 +112,11 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.match(sent[0].text, /Transport/);
     assert.doesNotMatch(sent[0].text, /What category/);
     const buttons = sent[0].options.reply_markup.inline_keyboard.flat();
-    assert.equal(buttons.length, 1);
+    assert.equal(buttons.length, 2);
     assert.equal(buttons[0].text, '👍 No note needed');
     assert.equal(buttons[0].callback_data, `s:n:${result.transaction_id}`);
+    assert.equal(buttons[1].text, 'Ignore');
+    assert.equal(buttons[1].callback_data, `s:i:${result.transaction_id}`);
   });
 
   it('auto-applies a high-confidence guess and remembers the merchant', async () => {
@@ -165,6 +167,35 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.ok(data.includes(`s:o:${result.transaction_id}`));
     assert.ok(data.includes(`s:u:${result.transaction_id}`));
     assert.ok(data.includes(`s:n:${result.transaction_id}`));
+    assert.ok(data.includes(`s:i:${result.transaction_id}`));
+  });
+
+  it('drops an ignored charge from the totals and can skip that payee next time', async () => {
+    const { sent, deps } = recorder();
+    const result = await ingestSmsText({
+      text: purchase({ merchant: 'CEFT BOC', amount: '15000.00', time: '18:20' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const tx = db.getTransactionById(result.transaction_id);
+    const ignored = await handleSmsCallback(callback(`s:i:${tx.id}`, tx), deps);
+    assert.equal(ignored.action, 'ignored');
+    assert.equal(db.getTransactionById(tx.id).status, 'ignored');
+    assert.equal(db.getTransactions({ limit: 1000 }).some((row) => row.id === tx.id), false);
+
+    const again = await handleSmsCallback(callback(`s:g:${tx.id}:1`, tx), deps);
+    assert.equal(again.action, 'merchant_ignored');
+    const before = sent.length;
+    const next = await ingestSmsText({
+      text: purchase({ merchant: 'CEFT BOC', amount: '2000.00', time: '18:21' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    assert.equal(next.action, 'ignored');
+    assert.equal(next.ignore_reason, 'merchant');
+    assert.equal(sent.length, before);
   });
 
   it('marks an expense reviewed on the no-note button without writing a note', async () => {
@@ -215,6 +246,114 @@ describe('SMS category resolution and Telegram notes', () => {
       reply_to_message: { message_id: 999999 },
     }, box.deps);
     assert.equal(missed, false);
+  });
+
+  it('saves a follow-up with no amount as the note on the open SMS expense', async () => {
+    const { deps } = recorder();
+    const result = await ingestSmsText({
+      text: purchase({ merchant: 'MINTPAY', amount: '2181.89', time: '19:35' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    for (const row of db.listSmsExpensesAwaitingNote()) {
+      if (row.id !== result.transaction_id) db.updateSmsExpense(row.id, { note_reviewed: 1 });
+    }
+    const saved = await handleSmsLooseNote({
+      text: 'Had street burger w dani',
+      chat: { id: '42' },
+    }, deps);
+    assert.equal(saved.action, 'note');
+    assert.equal(db.getTransactionById(result.transaction_id).note, 'Had street burger w dani');
+
+    const priced = await handleSmsLooseNote({
+      text: '450 coffee',
+      chat: { id: '42' },
+    }, deps);
+    assert.equal(priced, false);
+  });
+
+  it('asks which charge a note belongs to when several SMS expenses are open', async () => {
+    const { deps } = recorder();
+    for (const row of db.listSmsExpensesAwaitingNote()) {
+      db.updateSmsExpense(row.id, { note_reviewed: 1 });
+    }
+    const first = await ingestSmsText({
+      text: purchase({ merchant: 'PIZZA', amount: '1500.00', time: '19:40' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const second = await ingestSmsText({
+      text: purchase({ merchant: 'CINEMA', amount: '900.00', time: '19:41' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const chosen = await handleSmsLooseNote({
+      text: 'with the group',
+      chat: { id: '42' },
+    }, deps);
+    assert.equal(chosen.action, 'choose');
+    assert.equal(db.getTransactionById(first.transaction_id).note, null);
+    assert.equal(db.getTransactionById(second.transaction_id).note, null);
+
+    const cinema = db.getTransactionById(second.transaction_id);
+    const saved = await handleSmsTextReply({
+      text: 'with the group',
+      chat: { id: '42' },
+      reply_to_message: { message_id: cinema.telegram_notify_message_id },
+    }, deps);
+    assert.equal(saved.action, 'note');
+    assert.equal(db.getTransactionById(cinema.id).note, 'with the group');
+    assert.equal(db.getTransactionById(first.transaction_id).note, null);
+  });
+
+  it('treats "no note needed" as a dismissal and does not ask for an amount', async () => {
+    const { deps } = recorder();
+    const result = await ingestSmsText({
+      text: purchase({ merchant: 'KFC', amount: '2450.00', time: '20:10' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const dismissed = await handleSmsDismissal({
+      text: 'No note needed!',
+      chat: { id: '42' },
+    }, deps);
+    assert.equal(dismissed.action, 'note_reviewed');
+    const row = db.getTransactionById(result.transaction_id);
+    assert.equal(row.note_reviewed, 1);
+    assert.equal(row.note, null);
+  });
+
+  it('saves a comment on the latest SMS charge after no-note was tapped', async () => {
+    const { deps } = recorder();
+    for (const row of db.listRecentSmsWithoutNote()) {
+      db.updateSmsExpense(row.id, { note_reviewed: 1, note: 'closed' });
+    }
+    const older = await ingestSmsText({
+      text: purchase({ merchant: 'MINTPAY', amount: '2181.89', time: '22:01' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const uber = await ingestSmsText({
+      text: purchase({ merchant: 'UBER', amount: '234.42', time: '22:02' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const uberRow = db.getTransactionById(uber.transaction_id);
+    await handleSmsCallback(callback(`s:n:${uberRow.id}`, uberRow), deps);
+
+    const saved = await handleSmsLooseNote({
+      text: 'From street burger to home w dani',
+      chat: { id: '42' },
+    }, deps);
+    assert.equal(saved.action, 'note');
+    assert.equal(db.getTransactionById(uber.transaction_id).note, 'From street burger to home w dani');
+    assert.equal(db.getTransactionById(older.transaction_id).note, null);
   });
 
   it('asks to mute after three explicit no-note taps, then honors mute or a decline', async () => {

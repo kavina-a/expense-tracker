@@ -67,10 +67,21 @@ db.exec(`
     category_prompt_message_id INTEGER
   );
 
+  CREATE TABLE IF NOT EXISTS own_accounts (
+    account_masked TEXT PRIMARY KEY,
+    bank           TEXT NOT NULL,
+    first_seen_at  TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS muted_merchants (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     merchant  TEXT    NOT NULL UNIQUE,
     muted_at  TEXT    NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS ignored_merchants (
+    merchant    TEXT PRIMARY KEY,
+    ignored_at  TEXT NOT NULL
   );
 
   -- Decline resets the "3 no-note taps" streak so the next tap does not ask again.
@@ -1137,6 +1148,42 @@ function findSmsExpenseByNotifyMessageId(messageId) {
   `).get(messageId, messageId) || null;
 }
 
+function ignoreSmsExpense(id) {
+  const tx = getTransactionById(id);
+  if (!tx) return null;
+  db.prepare(`
+    UPDATE transactions
+    SET status = 'ignored', note_reviewed = 1
+    WHERE id = ?
+  `).run(id);
+  return getTransactionById(id);
+}
+
+function isMerchantIgnored(merchant) {
+  const key = String(merchant || '').trim().toUpperCase();
+  if (!key) return false;
+  return Boolean(db.prepare('SELECT 1 FROM ignored_merchants WHERE merchant = ?').get(key));
+}
+
+function ignoreMerchant(merchant) {
+  const key = String(merchant || '').trim().toUpperCase();
+  if (!key) return null;
+  db.prepare(`
+    INSERT INTO ignored_merchants (merchant, ignored_at) VALUES (?, ?)
+    ON CONFLICT(merchant) DO UPDATE SET ignored_at = excluded.ignored_at
+  `).run(key, new Date().toISOString());
+  return db.prepare('SELECT * FROM ignored_merchants WHERE merchant = ?').get(key);
+}
+
+function seedOwnAccountsFromEnv() {
+  const { canonicalizeAccount } = require('./sms/account');
+  const raw = process.env.OWN_HNB_ACCOUNTS || '';
+  for (const part of raw.split(/[\s,]+/)) {
+    const canon = canonicalizeAccount(part.trim());
+    if (canon) rememberOwnAccount(canon, 'hnb');
+  }
+}
+
 function isMerchantMuted(merchant) {
   const key = String(merchant || '').trim().toUpperCase();
   if (!key) return false;
@@ -1174,6 +1221,50 @@ function setNoteStreak(merchant, { reset_after_tx_id, last_suggested_tx_id } = {
   return getNoteStreak(key);
 }
 
+function rememberOwnAccount(accountMasked, bank = 'hnb') {
+  const key = String(accountMasked || '').trim();
+  if (!key) return null;
+  db.prepare(`
+    INSERT INTO own_accounts (account_masked, bank, first_seen_at) VALUES (?, ?, ?)
+    ON CONFLICT(account_masked) DO NOTHING
+  `).run(key, bank || 'hnb', new Date().toISOString());
+  return db.prepare('SELECT * FROM own_accounts WHERE account_masked = ?').get(key);
+}
+
+function isOwnAccount(accountMasked) {
+  const key = String(accountMasked || '').trim();
+  if (!key) return false;
+  return Boolean(db.prepare('SELECT 1 FROM own_accounts WHERE account_masked = ?').get(key));
+}
+
+function listRecentSmsWithoutNote(maxAgeMs = 6 * 60 * 60 * 1000, { openOnly = false } = {}) {
+  const reviewedClause = openOnly ? 'AND note_reviewed = 0' : '';
+  const rows = db.prepare(`
+    SELECT * FROM transactions
+    WHERE source = 'sms'
+      AND direction = 'debit'
+      AND COALESCE(status, 'posted') = 'posted'
+      AND telegram_notify_message_id IS NOT NULL
+      ${reviewedClause}
+      AND category_reply_pending = 0
+      AND (note IS NULL OR TRIM(note) = '')
+    ORDER BY id DESC
+  `).all();
+  const cutoff = Date.now() - maxAgeMs;
+  return rows.filter((row) => {
+    const created = Date.parse(row.created_at);
+    return Number.isFinite(created) && created >= cutoff;
+  });
+}
+
+function listSmsExpensesAwaitingNote(maxAgeMs = 6 * 60 * 60 * 1000) {
+  return listRecentSmsWithoutNote(maxAgeMs, { openOnly: true });
+}
+
+function findLatestSmsExpenseAwaitingNote(maxAgeMs = 6 * 60 * 60 * 1000) {
+  return listSmsExpensesAwaitingNote(maxAgeMs)[0] || null;
+}
+
 function recentSmsDebits(merchant, afterId = 0, limit = 3) {
   const key = String(merchant || '').trim().toUpperCase();
   return db.prepare(`
@@ -1183,6 +1274,8 @@ function recentSmsDebits(merchant, afterId = 0, limit = 3) {
     LIMIT ?
   `).all(key, afterId || 0, limit);
 }
+
+seedOwnAccountsFromEnv();
 
 module.exports = {
   insertTransaction,
@@ -1237,6 +1330,14 @@ module.exports = {
   listCategoriesInUse,
   updateSmsExpense,
   findSmsExpenseByNotifyMessageId,
+  findLatestSmsExpenseAwaitingNote,
+  listSmsExpensesAwaitingNote,
+  listRecentSmsWithoutNote,
+  rememberOwnAccount,
+  isOwnAccount,
+  ignoreSmsExpense,
+  isMerchantIgnored,
+  ignoreMerchant,
   isMerchantMuted,
   muteMerchant,
   getNoteStreak,

@@ -13,4 +13,31 @@ function canonicalizeAccount(raw) {
   return `${leading.slice(0, 4)}***${trailing.slice(-2)}`;
 }
 
-module.exports = { canonicalizeAccount };
+function maskedAccountsIn(text) {
+  const found = [];
+  const re = /\d[\dXx*]{4,}\d/g;
+  let match;
+  while ((match = re.exec(String(text || '')))) {
+    if (!/[*Xx]/.test(match[0])) continue;
+    const canon = canonicalizeAccount(match[0]);
+    if (canon && !found.includes(canon)) found.push(canon);
+  }
+  return found;
+}
+
+// Masked tokens and bare account numbers (10+ digits). Store names are skipped.
+function accountTokensIn(text) {
+  const found = [];
+  const re = /\d[\dXx*]{8,}\d/g;
+  let match;
+  while ((match = re.exec(String(text || '')))) {
+    const token = match[0];
+    const digits = token.replace(/\D/g, '');
+    if (!/[*Xx]/.test(token) && digits.length < 10) continue;
+    const canon = canonicalizeAccount(token);
+    if (canon && !found.includes(canon)) found.push(canon);
+  }
+  return found;
+}
+
+module.exports = { canonicalizeAccount, maskedAccountsIn, accountTokensIn };
