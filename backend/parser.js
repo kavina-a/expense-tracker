@@ -1,4 +1,5 @@
 const OpenAI = require('openai');
+const { toFile } = require('openai');
 require('dotenv').config();
 const { log, logError, preview } = require('./logger');
 
@@ -201,4 +202,21 @@ async function completeJsonChat({ kind, system, user, maxTokens = 80, meta = {} 
   return completion.choices?.[0]?.message?.content || '';
 }
 
-module.exports = { parseTextMessage, parseImageMessage, buildSystemPrompt, completeJsonChat, extractJSON };
+async function transcribeAudio(buffer, filename = 'voice.ogg') {
+  if (!process.env.GROQ_API_KEY || !buffer?.length) return null;
+  try {
+    const file = await toFile(buffer, filename || 'voice.ogg');
+    const result = await groq.audio.transcriptions.create({
+      file,
+      model: process.env.GROQ_WHISPER_MODEL || 'whisper-large-v3-turbo',
+      prompt: 'Personal expense note. Merchant names, categories, and amounts in rupees.',
+    });
+    const text = String(result?.text || '').trim();
+    return text || null;
+  } catch (err) {
+    logError('Parser', err, { filename, kind: 'transcribe' });
+    return null;
+  }
+}
+
+module.exports = { parseTextMessage, parseImageMessage, buildSystemPrompt, completeJsonChat, extractJSON, transcribeAudio };

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const path = require('path');
 require('dotenv').config();
 
 const BASE = () => `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
@@ -65,13 +66,32 @@ async function sendChartImage(chatId, imageBuffer, caption = '') {
 
 // ─── Download a photo sent by the user ───────────────────────────────────────
 
+function mimeFromName(filename) {
+  const ext = path.extname(filename || '').toLowerCase();
+  const types = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.ogg': 'audio/ogg',
+    '.oga': 'audio/ogg',
+    '.opus': 'audio/ogg',
+    '.mp3': 'audio/mpeg',
+    '.m4a': 'audio/mp4',
+    '.wav': 'audio/wav',
+    '.webm': 'audio/webm',
+  };
+  return types[ext] || 'application/octet-stream';
+}
+
 async function downloadMedia(fileId) {
   try {
     const { data: fileInfo } = await axios.get(`${BASE()}/getFile?file_id=${fileId}`);
     const filePath = fileInfo.result.file_path;
+    const filename = path.basename(filePath);
     const url = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${filePath}`;
     const { data } = await axios.get(url, { responseType: 'arraybuffer' });
-    return { buffer: Buffer.from(data), mimeType: 'image/jpeg' };
+    return { buffer: Buffer.from(data), mimeType: mimeFromName(filename), filename };
   } catch (err) {
     console.error('[Telegram] Download error:', err.response?.data || err.message);
     return null;

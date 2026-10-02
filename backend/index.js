@@ -6,6 +6,7 @@ const db       = require('./db');
 const { sendMessage: waSend, sendChartImage: waSendChart, downloadMedia: waDownload } = require('./whatsapp');
 const tg       = require('./telegram');
 const { processMessage, clearPending } = require('./handler');
+const { transcribeAudio } = require('./parser');
 const { mountSmsRoutes } = require('./sms/http');
 const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./sms/telegramNotify');
 
@@ -107,6 +108,13 @@ app.post('/webhook', async (req, res) => {
 
 // ─── Telegram Webhook ─────────────────────────────────────────────────────────
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 app.post('/telegram', async (req, res) => {
   // Validate secret token if set
   const secret = process.env.TELEGRAM_SECRET_TOKEN;
@@ -137,43 +145,61 @@ app.post('/telegram', async (req, res) => {
 
     if (!message) return;
 
-    if (message.reply_to_message && message.text?.trim()) {
-      const smsReply = await handleSmsTextReply(message);
+    const tgSender = {
+      sendText:  (text) => tg.sendMessage(chatId, text),
+      sendImage: (buf)  => tg.sendChartImage(chatId, buf),
+    };
+
+    let incoming = message;
+    if (!incoming.text?.trim() && (incoming.voice || incoming.audio)) {
+      console.log(`[Telegram] Message from chat ${chatId}: type=voice`);
+      const clip = incoming.voice || incoming.audio;
+      const media = await tg.downloadMedia(clip.file_id);
+      if (!media) {
+        await tg.sendMessage(chatId, 'Could not download that voice message. Try again.');
+        return;
+      }
+      const heard = await transcribeAudio(media.buffer, media.filename);
+      if (!heard) {
+        await tg.sendMessage(chatId, 'Could not make out that voice message. Try again.');
+        return;
+      }
+      await tg.sendMessage(chatId, `Heard: ${escapeHtml(heard)}`);
+      incoming = { ...incoming, text: heard };
+    }
+
+    if (incoming.reply_to_message && incoming.text?.trim()) {
+      const smsReply = await handleSmsTextReply(incoming);
       if (smsReply) {
         clearPending('telegram', chatId);
         return;
       }
     }
 
-    console.log(`[Telegram] Message from chat ${chatId}: type=${message.photo ? 'image' : 'text'}`);
+    console.log(`[Telegram] Message from chat ${chatId}: type=${incoming.photo ? 'image' : 'text'}`);
 
-    const tgSender = {
-      sendText:  (text) => tg.sendMessage(chatId, text),
-      sendImage: (buf)  => tg.sendChartImage(chatId, buf),
-    };
-
-    if (message.photo) {
+    if (incoming.photo) {
       // photos arrive as an array from smallest to largest; pick the last (best quality)
-      const fileId = message.photo[message.photo.length - 1].file_id;
+      const fileId = incoming.photo[incoming.photo.length - 1].file_id;
       const media  = await tg.downloadMedia(fileId);
       if (!media) { await tg.sendMessage(chatId, 'Could not download the image. Please try again.'); return; }
       await processMessage({ type: 'image', imageBuffer: media.buffer, imageMimeType: media.mimeType, rawText: '[receipt image]', channel: 'telegram', chatId }, tgSender);
-    } else if (message.text) {
-      const text = message.text.trim();
+    } else if (incoming.text) {
+      const text = incoming.text.trim();
       if (!text) return;
-      const dismissed = await handleSmsDismissal(message);
+      const dismissed = await handleSmsDismissal(incoming);
       if (dismissed) {
         clearPending('telegram', chatId);
         return;
       }
-      const smsNote = await handleSmsLooseNote(message);
+      const smsNote = await handleSmsLooseNote(incoming);
       if (smsNote) {
         clearPending('telegram', chatId);
         return;
       }
       await processMessage({ type: 'text', text, rawText: text, channel: 'telegram', chatId }, tgSender);
     } else {
-      await tg.sendMessage(chatId, 'I can only process text messages and receipt images.');
+      await tg.sendMessage(chatId, 'I can only process text messages, voice notes, and receipt images.');
     }
   } catch (err) {
     console.error('[Telegram] Webhook error:', err);
