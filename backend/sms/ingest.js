@@ -93,6 +93,10 @@ function ownTransfer(text) {
   };
 }
 
+function skippedNotify(result, reason) {
+  return { ...result, notified: false, notify_reason: reason };
+}
+
 function ignoredResult(raw, parsed, reason) {
   const label = reason === 'interest'
     ? 'Interest credit ignored. Not an expense.'
@@ -100,12 +104,12 @@ function ignoredResult(raw, parsed, reason) {
       ? `Charges from ${parsed.merchant} are ignored.`
       : 'Transfer between your own accounts ignored. Not an expense.';
   log('info', 'SmsIngest', 'ignored', { sms_raw_id: raw.id, reason, account: parsed.account_masked });
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'ignored',
     ignore_reason: reason,
     message: label,
-  };
+  }, 'ignored');
 }
 
 function money(amount) {
@@ -195,14 +199,14 @@ function reverseOne(parsed, raw, key, debit) {
   }));
   const message = `Reversed expense #${debit.id} (${debit.merchant || 'unknown'} ${money(debit.amount)} LKR). No second row.`;
   log('info', 'SmsIngest', 'reversed', { sms_raw_id: raw.id, transaction_id: debit.id, amount: debit.amount });
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'reversed',
     message,
     transaction_id: debit.id,
     reversal_id: row.id,
     category: debit.category,
-  };
+  }, 'not_a_purchase');
 }
 
 function linkExisting(parsed, raw, key, debit) {
@@ -213,14 +217,14 @@ function linkExisting(parsed, raw, key, debit) {
   }));
   const message = `Already reversed expense #${debit.id}. Linked this SMS; no second row.`;
   log('info', 'SmsIngest', 'linked_existing', { sms_raw_id: raw.id, transaction_id: debit.id });
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'linked_existing',
     message,
     transaction_id: debit.id,
     reversal_id: row.id,
     category: debit.category,
-  };
+  }, 'not_a_purchase');
 }
 
 function needsReview(parsed, raw, key, candidates) {
@@ -234,14 +238,14 @@ function needsReview(parsed, raw, key, candidates) {
   const label = parsed.merchant || 'matching';
   const message = `Needs review: ${ids.length} ${label} charges of ${money(parsed.amount)} LKR. None were changed.`;
   log('warn', 'SmsIngest', 'needs_review', { sms_raw_id: raw.id, candidate_ids: ids, amount: parsed.amount });
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'needs_review',
     message,
     review_id: row.id,
     reversal_id: row.id,
     candidates: candidates.map(candidateView),
-  };
+  }, 'not_a_purchase');
 }
 
 function orphan(parsed, raw, key) {
@@ -252,21 +256,23 @@ function orphan(parsed, raw, key) {
   }));
   const message = 'No matching posted expense. Logged as an orphan reversal; not counted as income.';
   log('warn', 'SmsIngest', 'orphan_reversal', { sms_raw_id: raw.id, amount: parsed.amount, merchant: parsed.merchant });
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'orphan_reversal',
     status: 'orphan_reversal',
     message,
     reversal_id: row.id,
-  };
+  }, 'not_a_purchase');
 }
 
 async function finishPurchase(raw, parsed, transaction, options, action, message) {
   let current = transaction;
   let notified = false;
+  let notify_reason = 'notify_disabled';
   if (options.notify !== false) {
     const delivery = await notifySmsExpense(current, options);
-    notified = delivery.notified;
+    notified = Boolean(delivery.notified);
+    notify_reason = delivery.reason || (notified ? 'sent' : 'unknown');
     current = db.getTransactionById(current.id) || current;
   }
   return {
@@ -277,6 +283,7 @@ async function finishPurchase(raw, parsed, transaction, options, action, message
     transaction_id: current.id,
     transaction: current,
     notified,
+    notify_reason,
   };
 }
 
@@ -353,7 +360,7 @@ async function insertPurchase(parsed, raw, key, text, options = {}) {
 
 function duplicateReversal(raw, parsed, row) {
   const hydrated = hydrateReversal(row);
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'duplicate',
     message: 'Already processed. No new row.',
@@ -362,7 +369,7 @@ function duplicateReversal(raw, parsed, row) {
     review_id: row.status === 'needs_review' ? row.id : null,
     transaction_id: row.transaction_id,
     candidates: hydrated.candidates,
-  };
+  }, 'not_a_purchase');
 }
 
 async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, chatId, sendMessage } = {}) {
@@ -384,11 +391,11 @@ async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, c
 
   if (!parsed) {
     log('warn', 'SmsIngest', 'unparsed', { sms_raw_id: raw.id, preview: preview(text, 140) });
-    return {
+    return skippedNotify({
       ...baseResult(raw, null),
       action: 'unparsed',
       message: 'SMS did not match a known bank format. Logged raw and not counted.',
-    };
+    }, 'unparsed');
   }
 
   const key = dedupeKey(parsed);
@@ -412,11 +419,11 @@ async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, c
   }
 
   log('warn', 'SmsIngest', 'unparsed', { sms_raw_id: raw.id, parser_match: parsed.parser_match });
-  return {
+  return skippedNotify({
     ...baseResult(raw, parsed),
     action: 'unparsed',
     message: 'Parsed SMS had no ingest handler. Logged raw and not counted.',
-  };
+  }, 'unparsed');
 }
 
 function listSmsReviews() {

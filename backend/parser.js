@@ -11,7 +11,8 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 // Groq is OpenAI-compatible; native fetch avoids Railway "Premature close" issues.
 const groq = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
+  // Placeholder so requiring this module in tests does not throw when Groq is unset.
+  apiKey: process.env.GROQ_API_KEY || 'missing-groq-api-key',
   baseURL: GROQ_BASE_URL,
   fetch: globalThis.fetch,
   maxRetries: 3,
