@@ -9,6 +9,7 @@ for (const suffix of ['', '-wal', '-shm']) {
 process.env.DB_PATH = dbPath;
 process.env.SMS_INGEST_SECRET = 'test-secret';
 process.env.MY_TELEGRAM_CHAT_ID = '';
+process.env.GROQ_API_KEY ||= 'test-not-used';
 
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
