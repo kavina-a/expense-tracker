@@ -99,7 +99,7 @@ async function notifySmsExpense(transaction, deps = {}) {
     category: tx.category,
     merchant: tx.merchant,
   });
-  return { notified: true, message_id: messageId };
+  return { notified: true, message_id: messageId, reason: 'sent' };
 }
 
 function streakWarrantsMute(tx) {

@@ -16,6 +16,14 @@ const db = require('../db');
 const { ingestSmsText } = require('./ingest');
 const { interpretCategoryGuess } = require('./categorize');
 const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./telegramNotify');
+const {
+  realInternetUber,
+  realInternetUberOct18,
+  realPurchaseBarista,
+  realBillMobitel,
+  realInternetMintpay,
+  realKeellsWithCommas,
+} = require('./samples');
 
 function purchase({ merchant, amount, time }) {
   return `SMS ALERT:INTERNET, Account:2080***2939,Location:${merchant}, LK,Amount(Approx.):${amount} LKR,Av.Bal:15184.20 LKR,Date:25.09.26,Time:${time}, Hot Line:0112462462`;
@@ -93,6 +101,7 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.equal(result.category, 'Transport');
     assert.equal(result.category_via, 'rule');
     assert.equal(result.notified, true);
+    assert.equal(result.notify_reason, 'sent');
     const row = db.getTransactionById(result.transaction_id);
     assert.equal(row.category, 'Transport');
     assert.ok(row.telegram_notify_message_id);
@@ -393,6 +402,7 @@ describe('SMS category resolution and Telegram notes', () => {
       ...muted.deps,
     });
     assert.equal(later.notified, false);
+    assert.equal(later.notify_reason, 'muted');
     assert.equal(later.category, 'Groceries');
     assert.equal(guesses, 1);
     assert.equal(muted.sent.length, before);
@@ -489,5 +499,36 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.equal(named.note, null);
     assert.equal(named.category_reply_pending, 0);
     assert.equal(db.matchCategoryRule('PETS VET'), 'Vet');
+  });
+
+  it('notifies Telegram for each real HNB sample, including BillPmt', async () => {
+    const cases = [
+      { text: realInternetUber, merchant: 'UBER', amount: 670.59 },
+      { text: realInternetUberOct18, merchant: 'UBER', amount: 1405.83 },
+      { text: realPurchaseBarista, merchant: 'BARISTA - CARGILLS SQUARE', amount: 715 },
+      { text: realBillMobitel, merchant: 'MOBITEL BILL PAYMENT', amount: 1598 },
+      { text: realInternetMintpay, merchant: 'MINTPAY PVT LTD', amount: 2181.89 },
+      { text: realKeellsWithCommas, merchant: 'KEELLS SUPER, COLOMBO 03', amount: 500 },
+    ];
+
+    for (const sample of cases) {
+      const box = recorder();
+      const result = await ingestSmsText({
+        text: sample.text,
+        guessCategory: null,
+        notify: true,
+        ...box.deps,
+      });
+      assert.equal(result.action, 'inserted', sample.merchant);
+      assert.equal(result.parsed.merchant, sample.merchant);
+      assert.equal(Number(result.parsed.amount), sample.amount);
+      assert.equal(result.notified, true);
+      assert.equal(result.notify_reason, 'sent');
+      assert.equal(box.sent.length, 1);
+      assert.match(box.sent[0].text, new RegExp(sample.merchant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.match(box.sent[0].text, new RegExp(Number(sample.amount).toFixed(2)));
+      const row = db.getTransactionById(result.transaction_id);
+      assert.ok(row.telegram_notify_message_id);
+    }
   });
 });

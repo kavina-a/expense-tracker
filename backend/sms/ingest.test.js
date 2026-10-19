@@ -20,7 +20,19 @@ function ingest(options) {
   return ingestSmsText({ guessCategory: null, notify: false, ...options });
 }
 const { mountSmsRoutes } = require('./http');
-const { purchaseMintpay, purchaseUber, reversalUber, creditUber } = require('./samples');
+const {
+  purchaseMintpay,
+  purchaseUber,
+  reversalUber,
+  creditUber,
+  realInternetUber,
+  realInternetUberOct18,
+  realPurchaseBarista,
+  realBillMobitel,
+  realInternetMintpay,
+  realKeellsWithCommas,
+  realInternetUberWrapped,
+} = require('./samples');
 
 function cents(amount) {
   return Math.round(Number(amount) * 100);
@@ -161,6 +173,7 @@ describe('SMS ingest', () => {
     const before = db.getTransactions({ includeReversed: true, limit: 1000 }).length;
     const result = await ingest({ text: 'this is not a bank sms' });
     assert.equal(result.action, 'unparsed');
+    assert.equal(result.notify_reason, 'unparsed');
     assert.equal(result.parsed, null);
     assert.equal(db.getSmsRaw(result.sms_raw_id).parsed, 0);
     assert.equal(db.getSmsRaw(result.sms_raw_id).parser_match, null);
@@ -223,6 +236,63 @@ describe('SMS ingest', () => {
     assert.equal(smsExpenseRows(8800, 'UBER').length, 1);
     assert.equal(smsExpenseRows(8800, 'UBER')[0].status, 'reversed');
   });
+
+  it('logs real HNB-prefixed purchases, comma merchants, and BillPmt debits', async () => {
+    const samples = [
+      { text: realInternetUber, merchant: 'UBER', amount: 67059, date: '2026-10-19', occurred: '2026-10-19T17:06:00', match: 'hnb_purchase_alert' },
+      { text: realInternetUberOct18, merchant: 'UBER', amount: 140583, date: '2026-10-18', occurred: '2026-10-18T18:03:00', match: 'hnb_purchase_alert' },
+      { text: realPurchaseBarista, merchant: 'BARISTA - CARGILLS SQUARE', amount: 71500, date: '2026-10-19', occurred: '2026-10-19T09:12:00', match: 'hnb_purchase_alert' },
+      { text: realBillMobitel, merchant: 'MOBITEL BILL PAYMENT', amount: 159800, date: '2026-10-19', occurred: '2026-10-19T10:18:43', match: 'hnb_bill_payment' },
+      { text: realInternetMintpay, merchant: 'MINTPAY PVT LTD', amount: 218189, date: '2026-10-19', occurred: '2026-10-19T14:24:00', match: 'hnb_purchase_alert' },
+      { text: realKeellsWithCommas, merchant: 'KEELLS SUPER, COLOMBO 03', amount: 50000, date: '2026-10-19', occurred: '2026-10-19T10:00:00', match: 'hnb_purchase_alert' },
+    ];
+
+    for (const sample of samples) {
+      const result = await ingest({ text: sample.text });
+      assert.equal(result.action, 'inserted', sample.merchant);
+      assert.equal(result.parsed.merchant, sample.merchant);
+      assert.equal(cents(result.parsed.amount), sample.amount);
+      assert.equal(result.parsed.occurred_at, sample.occurred);
+      assert.equal(result.transaction.date, sample.date);
+      assert.equal(result.transaction.type, 'expense');
+      assert.equal(result.transaction.source, 'sms');
+      assert.equal(result.notified, false);
+      assert.equal(result.notify_reason, 'notify_disabled');
+      assert.equal(db.getSmsRaw(result.sms_raw_id).parser_match, sample.match);
+      assert.equal(smsExpenseRows(sample.amount, sample.merchant).length, 1);
+    }
+
+    const wrapped = await ingest({ text: realInternetUberWrapped });
+    assert.equal(wrapped.action, 'duplicate');
+    assert.equal(smsExpenseRows(67059, 'UBER').length, 1);
+  });
+
+  it('does not book non-BillPmt free-text debits and still ignores own-account transfers', async () => {
+    const before = db.getTransactions({ includeReversed: true, limit: 1000 }).length;
+    const transfer = await ingest({
+      text: 'LKR 8,000.00 debited to Ac No:20802XXXXX39 on 19/10/26 11:00:00 Reason:CEFT/JANE/SMITH Bal:LKR 7,000.00',
+    });
+    const card = await ingest({
+      text: 'LKR 12,000.00 debited to Ac No:20802XXXXX39 on 19/10/26 11:01:00 Reason:CARD REPAYMENT Bal:LKR 1,000.00',
+    });
+    const atm = await ingest({
+      text: 'LKR 3,000.00 debited to Ac No:20802XXXXX39 on 19/10/26 11:02:00 Reason:ATM WDL Bal:LKR 4,000.00',
+    });
+    assert.equal(transfer.action, 'unparsed');
+    assert.equal(transfer.notify_reason, 'unparsed');
+    assert.equal(card.action, 'unparsed');
+    assert.equal(atm.action, 'unparsed');
+
+    db.rememberOwnAccount('2080***39', 'hnb');
+    db.rememberOwnAccount('2080***64', 'hnb');
+    const own = await ingest({
+      text: 'LKR 500.00 debited from Ac No:20802XXXXX39 on 19/10/26 11:03:00 Reason:20802XXXXX64 Bal:LKR 3,500.00',
+    });
+    assert.equal(own.action, 'ignored');
+    assert.equal(own.ignore_reason, 'own_transfer');
+    assert.equal(own.notify_reason, 'ignored');
+    assert.equal(db.getTransactions({ includeReversed: true, limit: 1000 }).length, before);
+  });
 });
 
 describe('POST /api/sms-ingest', () => {
@@ -278,6 +348,27 @@ describe('POST /api/sms-ingest', () => {
     assert.equal(body.category, 'Transport');
     assert.equal(body.parsed.merchant, 'UBER');
     assert.equal(cents(body.parsed.amount), 4250);
+    assert.equal(body.notified, false);
+    assert.equal(body.notify_reason, 'no_chat');
     assert.equal(db.getSmsRaw(body.sms_raw_id).received_at, '2026-08-15T09:16:00+05:30');
+  });
+
+  it('ingests a real HNB-prefixed SMS and reports why Telegram was skipped', async () => {
+    const res = await fetch(`${baseUrl}/api/sms-ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-sms-secret': 'test-secret' },
+      body: JSON.stringify({
+        text: 'HNB SMS ALERT:INTERNET, Account:2080***2939,Location:PICKME, LK,Amount(Approx.):310.40 LKR,Av.Bal:14000.00 LKR,Date:19.10.26,Time:16:40, Hot Line:0112462462',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.action, 'inserted');
+    assert.equal(body.parsed.merchant, 'PICKME');
+    assert.equal(cents(body.parsed.amount), 31040);
+    assert.equal(body.parsed.occurred_at, '2026-10-19T16:40:00');
+    assert.equal(body.notified, false);
+    assert.equal(body.notify_reason, 'no_chat');
   });
 });
