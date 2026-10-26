@@ -9,7 +9,8 @@
     "test": "node --test --test-concurrency=1 sms/*.test.js test/*.test.js",
     "key:create": "node scripts/key.js create",
     "key:list": "node scripts/key.js list",
-    "key:revoke": "node scripts/key.js revoke"
+    "key:revoke": "node scripts/key.js revoke",
+    "key:generate": "node scripts/key-generate.js"
   },
   "dependencies": {
     "axios": "^1.18.1",

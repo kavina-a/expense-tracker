@@ -15,7 +15,7 @@ module.exports = function setupEnv(name, overrides = {}) {
     MY_TELEGRAM_CHAT_ID: '',
     MY_WHATSAPP_NUMBER: '',
     TELEGRAM_SECRET_TOKEN: '',
-    GROQ_API_KEY: 'test-not-used',
+    GROQ_API_KEY: '', // no key: category guessing stays off the network
     DASHBOARD_PASSWORD: 'correct horse battery',
     NOTIFY_CHANNEL: 'ledger',
     COOKIE_SECURE: 'false',

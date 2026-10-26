@@ -8,7 +8,7 @@ Plain-English notes on each phase of the autonomy work.
 
 **What changed**
 
-- **Everything under `/api` now needs a login.** The dashboard uses a password and an httpOnly cookie, so no key sits in the browser. Ledger and the iOS Shortcut use API keys, which come in three scopes: `full`, `agent` (read-only) and `ingest` (SMS only). Keys are created from the command line, shown once, and only a hash is stored. The old `X-SMS-Secret` still works for the SMS routes so the Shortcut doesn't break.
+- **Everything under `/api` now needs a login.** The dashboard uses a password and an httpOnly cookie, so no key sits in the browser. Ledger and the iOS Shortcut use API keys, which come in three scopes: `full`, `agent` (read-only) and `ingest` (SMS only). Keys are generated on your own machine (`npm run key:generate`), shown once, and only a hash is stored. You give Railway the hashes in one variable, `API_KEY_SEEDS`, so no server shell is needed. `npm run key:create` still works when you are on a shell. The old `X-SMS-Secret` still works for the SMS routes so the Shortcut doesn't break.
 - **CORS is stricter.** The "any `*.vercel.app` site" rule is gone.
 - **The offline cache of API responses is gone.** The app used to keep a copy of your transactions on the device for 5 minutes; it no longer does, and it deletes the old copy.
 - **A committed database backup was removed** and `*.db*` is now ignored. It held 2 test transactions and the category list. The repo is public, so it stays visible in history until you purge it (see the end of this file).
@@ -17,9 +17,11 @@ Plain-English notes on each phase of the autonomy work.
 - **Dates now follow Colombo time.** The server runs in UTC, so between midnight and 05:30 in Colombo "today" and "this month" were wrong. Fixed everywhere, including the database's "last N months" queries.
 - **A safety net for migrations.** Before the first new migration, a full copy of the database is written next to it and the path is logged. Existing data is never rewritten.
 
+**New environment variables:** `DASHBOARD_PASSWORD`, `API_KEY_SEEDS`, `NOTIFY_CHANNEL`, `FRONTEND_URL` (now an exact match), and optionally `COOKIE_SECURE`.
+
 **New tables (empty until used):** `api_keys`, `sessions`, `pending_clarifications`, `escalations`, `questions`, `schema_migrations`.
 
-**Tests:** 97 pass. New ones check that every `/api` route (found by walking Express's own route list, so future routes are covered automatically) answers `401` without credentials, each key scope, revoked keys, the login cookie and lockout, session expiry, the cross-site write guard, the Colombo date rollover, expiring follow-ups, the migration backup, and both notification channels.
+**Tests:** 105 pass, and none of them touch the network any more (a few existing tests were quietly sending merchant names to Groq with a fake key). New ones check that every `/api` route (found by walking Express's own route list, so future routes are covered automatically) answers `401` without credentials, each key scope, revoked keys, the login cookie and lockout, session expiry, the cross-site write guard, the Colombo date rollover, expiring follow-ups, the migration backup, and both notification channels.
 
 ### To purge the old backup from git history (you run this; I haven't)
 

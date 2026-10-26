@@ -11,7 +11,7 @@ process.env.SMS_INGEST_SECRET = 'test-secret';
 process.env.MY_TELEGRAM_CHAT_ID = '';
 // These tests cover the Telegram fallback; the ledger channel is tested in test/notify.test.js.
 process.env.NOTIFY_CHANNEL = 'telegram';
-process.env.GROQ_API_KEY ||= 'test-not-used';
+process.env.GROQ_API_KEY = ''; // no key: category guessing stays off the network
 
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');

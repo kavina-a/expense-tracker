@@ -19,15 +19,22 @@ For local development, run the backend locally and leave `VITE_API_URL` unset, s
 
 ### API keys (for Ledger and the SMS Shortcut)
 
+Generate them on your own machine. Nothing needs to run on the server:
+
 ```bash
 cd backend
-npm run key:create -- --name ledger   --scope agent    # shown once, never stored in plain text
-npm run key:create -- --name shortcut --scope ingest
-npm run key:list
-npm run key:revoke -- --id 3
+npm run key:generate      # makes a "ledger" (agent) key and a "shortcut" (ingest) key
 ```
 
-Run these where the production database lives (on Railway, the service shell), so they write to the same file the server reads. Send a key as `Authorization: Bearer stk_…` (or `X-API-Key`).
+It prints each key once (save them in your password manager) and one line to paste into Railway → Variables:
+
+```
+API_KEY_SEEDS=ledger:agent:<prefix>:<hash>,shortcut:ingest:<prefix>:<hash>
+```
+
+That line holds only hashes, so it is safe to store. The server registers the keys when it boots; running it again changes nothing, and a key you revoked stays revoked. To add a key later, generate it and append its entry after a comma.
+
+Send a key as `Authorization: Bearer stk_…` (or `X-API-Key`). Other commands, run where the database lives: `npm run key:create -- --name x --scope full` (creates a key directly in that database), `npm run key:list`, `npm run key:revoke -- --id 3`.
 
 | Scope | Can do |
 |---|---|
@@ -44,6 +51,7 @@ Run these where the production database lives (on Railway, the service shell), s
 | Variable | Purpose |
 |---|---|
 | `DASHBOARD_PASSWORD` | Dashboard sign-in |
+| `API_KEY_SEEDS` | Hashes of keys made with `npm run key:generate` |
 | `NOTIFY_CHANNEL` | `ledger` (default) or `telegram` |
 | `FRONTEND_URL` | Allowed CORS origin (exact match; no wildcards any more) |
 | `COOKIE_SECURE` | Optional override for the cookie's `Secure` flag |

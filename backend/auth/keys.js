@@ -9,14 +9,10 @@
 const crypto = require('crypto');
 const db = require('../db').connection;
 const { isoNow, now } = require('../time');
+const { SCOPES, sha256Hex, generateKey, parseSeeds } = require('./keygen');
 
-const SCOPES = ['full', 'ingest', 'agent'];
 const TOKEN_RE = /^stk_([0-9a-f]{8})_([A-Za-z0-9_-]{20,})$/;
 const LAST_USED_WRITE_MS = 60 * 1000;
-
-function sha256Hex(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
 
 function safeEqualHex(a, b) {
   const left = Buffer.from(a, 'hex');
@@ -26,24 +22,35 @@ function safeEqualHex(a, b) {
 }
 
 function createKey({ name, scope }) {
-  const label = String(name || '').trim();
-  if (!label) throw new Error('name is required');
-  if (!SCOPES.includes(scope)) throw new Error(`scope must be one of: ${SCOPES.join(', ')}`);
-
-  const prefix = crypto.randomBytes(4).toString('hex');
-  const secret = crypto.randomBytes(32).toString('base64url');
+  const generated = generateKey({ name, scope });
   const result = db.prepare(`
     INSERT INTO api_keys (name, scope, prefix, hash, created_at)
     VALUES (?, ?, ?, ?, ?)
-  `).run(label, scope, prefix, sha256Hex(secret), isoNow());
+  `).run(generated.name, generated.scope, generated.prefix, generated.hash, isoNow());
 
   return {
     id: Number(result.lastInsertRowid),
-    name: label,
-    scope,
+    name: generated.name,
+    scope: generated.scope,
     // Shown once. Never stored.
-    key: `stk_${prefix}_${secret}`,
+    key: generated.key,
   };
+}
+
+// Registers keys that were generated elsewhere (key:generate) and handed to the
+// server as hashes in API_KEY_SEEDS. Idempotent by prefix: re-running on every
+// boot changes nothing, and a key you revoked stays revoked.
+function seedKeysFromEnv(raw = process.env.API_KEY_SEEDS) {
+  const { entries, problems } = parseSeeds(raw);
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO api_keys (name, scope, prefix, hash, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const added = [];
+  for (const entry of entries) {
+    if (insert.run(entry.name, entry.scope, entry.prefix, entry.hash, isoNow()).changes) added.push(entry.name);
+  }
+  return { added, problems };
 }
 
 // Returns { id, name, scope } or null. Never throws on malformed input.
@@ -83,4 +90,4 @@ function revokeKey(id) {
   `).get(id);
 }
 
-module.exports = { SCOPES, createKey, verifyKey, listKeys, revokeKey, sha256Hex };
+module.exports = { SCOPES, createKey, seedKeysFromEnv, verifyKey, listKeys, revokeKey, sha256Hex };

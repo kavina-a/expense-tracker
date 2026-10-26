@@ -10,6 +10,7 @@ const { transcribeAudio } = require('./parser');
 const { mountSmsRoutes } = require('./sms/http');
 const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./sms/telegramNotify');
 const { apiAuth, mountAuthRoutes } = require('./auth');
+const { seedKeysFromEnv } = require('./auth/keys');
 const { mountAgentRoutes } = require('./agent');
 const { todayColombo, monthColombo, yearColombo } = require('./time');
 
@@ -34,6 +35,13 @@ app.use(cors({
   origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
   credentials: true,
 }));
+
+// Keys generated off-server (npm run key:generate) arrive as hashes in API_KEY_SEEDS.
+{
+  const { added, problems } = seedKeysFromEnv();
+  if (added.length) console.log(`[auth] Registered API keys from API_KEY_SEEDS: ${added.join(', ')}`);
+  for (const problem of problems) console.warn(`[auth] API_KEY_SEEDS: ${problem}`);
+}
 
 // Every /api route needs a session cookie or an API key, except the login routes
 // and the SMS routes, which authenticate themselves (see auth/index.js).
