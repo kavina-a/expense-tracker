@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
+const { todayColombo } = require('./time');
 
 const RAILWAY_VOLUME_DIR = '/app/data';
 
@@ -33,6 +34,9 @@ if (volumeMounted && !onVolume) {
 
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+// A brand-new file has nothing worth backing up before migrations run.
+const dbExistedBefore = fs.existsSync(DB_PATH) && fs.statSync(DB_PATH).size > 0;
 
 const db = new Database(DB_PATH);
 console.log(`[db] Using ${DB_PATH}${onVolume ? ' (persistent volume)' : persistent ? '' : ' (ephemeral — will reset on redeploy!)'}`);
@@ -202,6 +206,130 @@ db.exec(`
     ON transactions(telegram_notify_message_id)
     WHERE telegram_notify_message_id IS NOT NULL;
 `);
+
+// ─── Named migrations ─────────────────────────────────────────────────────────
+// Additive only: CREATE ... IF NOT EXISTS and new columns. Nothing is dropped or
+// rewritten. No CHECK constraints, because changing one in SQLite means rebuilding
+// the table; values are validated in code instead.
+//
+// Before the first unapplied migration runs on an existing database, a full copy
+// is written with VACUUM INTO (synchronous, consistent) and its path is logged.
+
+const MIGRATIONS = [
+  {
+    name: '001_auth_sessions_notify',
+    sql: `
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        name         TEXT    NOT NULL,
+        scope        TEXT    NOT NULL,
+        prefix       TEXT    NOT NULL UNIQUE,
+        hash         TEXT    NOT NULL,
+        created_at   TEXT    NOT NULL,
+        revoked_at   TEXT,
+        last_used_at TEXT
+      );
+
+      -- id is sha256(token); the raw token only ever lives in the cookie.
+      CREATE TABLE IF NOT EXISTS sessions (
+        id           TEXT PRIMARY KEY,
+        created_at   TEXT NOT NULL,
+        expires_at   TEXT NOT NULL,
+        last_seen_at TEXT
+      );
+
+      -- Kash follow-up questions: the next message is merged with this text.
+      CREATE TABLE IF NOT EXISTS pending_clarifications (
+        channel    TEXT NOT NULL,
+        chat_id    TEXT NOT NULL,
+        text       TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        PRIMARY KEY (channel, chat_id)
+      );
+
+      -- Things Ledger should look at. dedupe_key keeps detectors idempotent.
+      CREATE TABLE IF NOT EXISTS escalations (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        type        TEXT    NOT NULL,
+        severity    TEXT    NOT NULL DEFAULT 'medium',
+        evidence    TEXT,
+        status      TEXT    NOT NULL DEFAULT 'open',
+        dedupe_key  TEXT    UNIQUE,
+        created_at  TEXT    NOT NULL,
+        resolved_at TEXT,
+        resolved_by TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_escalations_open ON escalations(status, created_at);
+
+      -- Questions for the user, asked by Ledger (or Telegram in fallback mode).
+      CREATE TABLE IF NOT EXISTS questions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject     TEXT    NOT NULL,
+        subject_id  INTEGER,
+        prompt      TEXT    NOT NULL,
+        options     TEXT,
+        priority    INTEGER NOT NULL DEFAULT 0,
+        dedupe_key  TEXT    UNIQUE,
+        created_at  TEXT    NOT NULL,
+        asked_at    TEXT,
+        answer_text TEXT,
+        resolution  TEXT,
+        resolved_by TEXT,
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_questions_open ON questions(resolution, priority, created_at);
+    `,
+  },
+];
+
+function appliedMigrationNames() {
+  const table = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+  ).get();
+  if (!table) return new Set();
+  return new Set(db.prepare('SELECT name FROM schema_migrations').all().map((row) => row.name));
+}
+
+function backupBeforeMigration(name) {
+  const dir = path.join(path.dirname(DB_PATH), 'backups');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = path.join(dir, `expenses-pre-${name}-${stamp}.db`);
+  console.log(`[db] Backing up before migration ${name}: ${file}`);
+  db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+  console.log(`[db] Backup written: ${file}`);
+  return file;
+}
+
+function runMigrations() {
+  const applied = appliedMigrationNames();
+  const pending = MIGRATIONS.filter((migration) => !applied.has(migration.name));
+  if (!pending.length) return { applied: [], backup: null };
+
+  const backup = dbExistedBefore ? backupBeforeMigration(pending[0].name) : null;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name       TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+  const record = db.prepare('INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)');
+  for (const migration of pending) {
+    db.transaction(() => {
+      db.exec(migration.sql);
+      record.run(migration.name, new Date().toISOString());
+    })();
+    console.log(`[db] Applied migration ${migration.name}`);
+  }
+  return { applied: pending.map((migration) => migration.name), backup };
+}
+
+const migrationResult = runMigrations();
+
+function getMigrationResult() {
+  return migrationResult;
+}
 
 const DEFAULT_CATEGORIES = [
   // ── Income ──────────────────────────────────────────────────────────────────
@@ -547,10 +675,10 @@ function getMonthlyTrends(months = 6) {
   return db.prepare(`
     SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
     FROM transactions
-    WHERE date >= date('now', '-' || ? || ' months') ${VISIBLE_FILTER}
+    WHERE date >= date(?, '-' || ? || ' months') ${VISIBLE_FILTER}
     GROUP BY month, type
     ORDER BY month ASC
-  `).all(months);
+  `).all(todayColombo(), months);
 }
 
 // ─── Categories ───────────────────────────────────────────────────────────────
@@ -759,10 +887,10 @@ function getCategoryTrends(category, months = 6) {
   return db.prepare(`
     SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
     FROM transactions
-    WHERE category = ? AND date >= date('now', '-' || ? || ' months') ${VISIBLE_FILTER}
+    WHERE category = ? AND date >= date(?, '-' || ? || ' months') ${VISIBLE_FILTER}
     GROUP BY month
     ORDER BY month ASC
-  `).all(category, months);
+  `).all(category, todayColombo(), months);
 }
 
 // ─── Savings Goals ────────────────────────────────────────────────────────────
@@ -848,10 +976,10 @@ function getPortfolioSummary() {
     WHERE (t.type = 'investment' OR (t.type = 'income' AND c.is_return = 1))
       AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
       AND COALESCE(t.status, 'posted') = 'posted'
-      AND t.date >= date('now', '-24 months')
+      AND t.date >= date(?, '-24 months')
     GROUP BY month
     ORDER BY month ASC
-  `).all();
+  `).all(todayColombo());
 
   const totalInvested = investRows.reduce((s, r) => s + r.total, 0);
   const totalReturns  = returnRows.reduce((s, r) => s + r.total, 0);
@@ -1343,4 +1471,8 @@ module.exports = {
   getNoteStreak,
   setNoteStreak,
   recentSmsDebits,
+  getMigrationResult,
+  // Raw better-sqlite3 handle for the newer modules (auth/, notify/) so this file
+  // stops growing. Older code keeps using the helpers above.
+  connection: db,
 };

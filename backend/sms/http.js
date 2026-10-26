@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { ingestSmsText, listSmsReviews, resolveSmsReview } = require('./ingest');
+const { authenticate } = require('../auth');
 
 function smsSecret() {
   const value = process.env.SMS_INGEST_SECRET;
@@ -13,15 +14,33 @@ function secretsMatch(provided, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// Who may call the SMS routes:
+//   - the legacy X-SMS-Secret header (the iOS Shortcut today)
+//   - an API key with scope ingest or full, or agent for GET (reading reviews)
+//   - a dashboard session (resolving a review from the UI)
 function requireSmsSecret(req, res, next) {
-  const expected = smsSecret();
-  if (!expected) {
-    return res.status(503).json({ error: 'SMS ingest is not configured' });
+  const providedSecret = req.get('x-sms-secret');
+  if (providedSecret) {
+    const expected = smsSecret();
+    if (!expected) return res.status(503).json({ error: 'SMS ingest is not configured' });
+    if (!secretsMatch(providedSecret, expected)) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
   }
-  const provided = req.get('x-sms-secret');
-  if (!provided || !secretsMatch(provided, expected)) {
+
+  const who = authenticate(req);
+  if (!who || who.invalid) {
+    if (!smsSecret() && !who) return res.status(503).json({ error: 'SMS ingest is not configured' });
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  const readOnly = req.method === 'GET' || req.method === 'HEAD';
+  const allowed = who.scope === 'full' || who.scope === 'ingest' || (who.scope === 'agent' && readOnly);
+  if (!allowed) return res.status(403).json({ error: 'Forbidden', code: 'insufficient_scope' });
+  // Same cross-site guard as apiAuth: a cookie session must send JSON on writes.
+  const jsonBody = String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json');
+  if (who.kind === 'session' && !readOnly && !jsonBody) {
+    return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+  req.auth = who;
   next();
 }
 

@@ -9,6 +9,9 @@ const { processMessage, clearPending } = require('./handler');
 const { transcribeAudio } = require('./parser');
 const { mountSmsRoutes } = require('./sms/http');
 const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./sms/telegramNotify');
+const { apiAuth, mountAuthRoutes } = require('./auth');
+const { mountAgentRoutes } = require('./agent');
+const { todayColombo, monthColombo, yearColombo } = require('./time');
 
 const app = express();
 app.use(express.json());
@@ -20,12 +23,11 @@ const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
+// Exact matches only. The dashboard reaches this API through Vercel's /api
+// rewrite, which the browser sees as same-origin, so no wildcard is needed.
 function isAllowedOrigin(origin) {
   if (!origin) return true;
-  if (ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o))) return true;
-  // Vercel preview + production deployments
-  if (/^https:\/\/[\w-]+\.vercel\.app$/.test(origin)) return true;
-  return false;
+  return ALLOWED_ORIGINS.includes(origin);
 }
 
 app.use(cors({
@@ -33,9 +35,15 @@ app.use(cors({
   credentials: true,
 }));
 
+// Every /api route needs a session cookie or an API key, except the login routes
+// and the SMS routes, which authenticate themselves (see auth/index.js).
+app.use('/api', apiAuth);
+mountAuthRoutes(app);
+mountAgentRoutes(app);
+
 const VALID_TYPES = ['income', 'expense', 'investment'];
 
-function thisMonthStr() { return new Date().toLocaleDateString('sv-SE').slice(0, 7); }
+function thisMonthStr() { return monthColombo(); }
 
 function safeId(param) {
   const id = parseInt(param, 10);
@@ -226,7 +234,7 @@ app.post('/api/transactions', apiHandler((req, res) => {
   if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return res.status(400).json({ error: 'A positive amount is required' });
   if (!type || !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'type must be income, expense, or investment' });
   if (!category?.trim()) return res.status(400).json({ error: 'category is required' });
-  const txDate = date || new Date().toLocaleDateString('sv-SE');
+  const txDate = date || todayColombo();
   const tx = db.insertTransaction({ amount: parsedAmount, type, category: category.trim(), description: description || null, date: txDate });
   res.status(201).json(tx);
 }));
@@ -267,7 +275,7 @@ app.get('/api/summary', apiHandler((req, res) => {
     return res.json(db.getSummaryOverall());
   }
   if (req.query.scope === 'year') {
-    const year = req.query.year || new Date().getFullYear().toString();
+    const year = req.query.year || yearColombo();
     return res.json(db.getSummaryByYear(year));
   }
   const month = req.query.month || thisMonthStr();
@@ -285,7 +293,7 @@ app.get('/api/daily', apiHandler((req, res) => {
 }));
 
 app.get('/api/yearly', apiHandler((req, res) => {
-  const year = req.query.year || new Date().getFullYear().toString();
+  const year = req.query.year || yearColombo();
   res.json(db.getYearlyOverview(year));
 }));
 
@@ -295,7 +303,7 @@ app.get('/api/yearly', apiHandler((req, res) => {
 
 app.get('/api/backup', apiHandler((_req, res) => {
   const data = db.getFullBackup();
-  const filename = `money-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const filename = `money-tracker-backup-${todayColombo()}.json`;
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.json(data);
 }));
@@ -474,7 +482,7 @@ if (fs.existsSync(FRONTEND_DIST)) {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+if (require.main === module) app.listen(PORT, () => {
   const info = db.getDbInfo();
   console.log(`\n🚀  Money Tracker running`);
   console.log(`💾  Database:         ${info.dbPath}`);
@@ -485,5 +493,9 @@ app.listen(PORT, () => {
   console.log(`🔗  WhatsApp webhook: http://localhost:${PORT}/webhook`);
   console.log(`📱  Telegram webhook: http://localhost:${PORT}/telegram`);
   console.log(`💬  SMS ingest:       http://localhost:${PORT}/api/sms-ingest`);
-  console.log(`📦  Backup:           GET ${PORT}/api/backup\n`);
+  console.log(`📦  Backup:           GET ${PORT}/api/backup`);
+  console.log(`🔐  Dashboard login:  ${process.env.DASHBOARD_PASSWORD ? 'enabled' : 'NOT CONFIGURED (set DASHBOARD_PASSWORD, or the dashboard cannot sign in)'}`);
+  console.log(`🔔  Notify channel:   ${require('./notify').channel()}\n`);
 });
+
+module.exports = { app };

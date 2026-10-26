@@ -2,6 +2,7 @@ const db = require('../db');
 const tg = require('../telegram');
 const { log } = require('../logger');
 const { PENDING_CATEGORY } = require('./categorize');
+const notify = require('../notify');
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -70,10 +71,31 @@ function muteKeyboard(txId) {
   };
 }
 
+// NOTIFY_CHANNEL=ledger: the same prompt Telegram would have sent becomes a
+// question Ledger reads over the API. Idempotent per transaction.
+function askLedgerAboutExpense(tx) {
+  const pending = tx.category === PENDING_CATEGORY;
+  const who = tx.merchant || 'Purchase';
+  const amount = `LKR ${Number(tx.amount).toFixed(2)}`;
+  const choices = pending ? db.listCategoriesInUse() : [];
+  const { question } = notify.ask({
+    subject: 'txn',
+    subjectId: tx.id,
+    prompt: pending
+      ? `What category is ${who} (${amount})?`
+      : `${who} ${amount} was filed under ${tx.category}. Is there a note for it, or none needed?`,
+    options: { kind: pending ? 'category' : 'note', choices },
+    priority: pending ? 2 : 1,
+    dedupeKey: `txn:${tx.id}:sms_expense`,
+  });
+  return { notified: false, reason: 'ledger_question', question_id: question.id };
+}
+
 async function notifySmsExpense(transaction, deps = {}) {
   const tx = db.getTransactionById(transaction.id) || transaction;
   if (!tx || tx.source !== 'sms') return { notified: false, reason: 'not_sms' };
   if (db.isMerchantMuted(tx.merchant)) return { notified: false, reason: 'muted' };
+  if (notify.channel() === 'ledger') return askLedgerAboutExpense(tx);
   if (tx.telegram_notify_message_id) return { notified: false, reason: 'already_sent' };
 
   const chatId = chatIdFrom(deps);
@@ -113,6 +135,17 @@ function streakWarrantsMute(tx) {
 
 async function maybeSuggestMute(tx, deps) {
   if (!streakWarrantsMute(tx)) return false;
+  if (notify.channel() === 'ledger') {
+    notify.ask({
+      subject: 'txn',
+      subjectId: tx.id,
+      prompt: `You have skipped the note for ${tx.merchant} three times in a row. Stop asking about it?`,
+      options: { kind: 'mute', choices: ['Yes, mute', 'No, keep asking'] },
+      dedupeKey: `txn:${tx.id}:mute_suggestion`,
+    });
+    db.setNoteStreak(tx.merchant, { last_suggested_tx_id: tx.id });
+    return true;
+  }
   const chatId = chatIdFrom(deps);
   if (!chatId) return false;
   const sent = await sender(deps)(

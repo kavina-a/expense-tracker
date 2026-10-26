@@ -25,16 +25,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https?:\/\/.*\/api\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
-            },
-          },
-        ],
+        // API responses are your financial data and are behind a login: never
+        // cache them on the device, and never answer an /api navigation (such as
+        // the backup download) with the app shell.
+        navigateFallbackDenylist: [/^\/api\//],
       },
     }),
   ],

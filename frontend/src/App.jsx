@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { Home, Clock, PlusCircle, BarChart3, User, ChevronLeft, ChevronRight, Download, Tag, Target, Crosshair, TrendingUp } from 'lucide-react'
+import { Home, Clock, PlusCircle, BarChart3, User, ChevronLeft, ChevronRight, Download, Tag, Target, Crosshair, TrendingUp, LogOut } from 'lucide-react'
 import { useState } from 'react'
 import Dashboard      from './pages/Dashboard'
 import Transactions   from './pages/Transactions'
@@ -10,6 +10,7 @@ import Yearly         from './pages/Yearly'
 import AddTransaction from './pages/AddTransaction'
 import SavingsGoals   from './pages/SavingsGoals'
 import Investments    from './pages/Investments'
+import { logout } from './api'
 
 const BOTTOM_TABS = [
   { to: '/',             label: 'Home',    icon: Home },
@@ -192,6 +193,19 @@ function ProfilePage() {
               <p className="text-[11px] text-warm-500 mt-0.5">Full JSON export of all data</p>
             </div>
           </a>
+
+          <button
+            onClick={async () => { try { await logout() } finally { window.dispatchEvent(new Event('auth-required')) } }}
+            className="w-full text-left flex items-center gap-3 p-4 rounded-item border-2 border-ink hover:shadow-brutal-sm hover:-translate-x-0.5 hover:-translate-y-0.5 transition-all"
+          >
+            <span className="w-9 h-9 rounded-item bg-warm-600 border-2 border-ink flex items-center justify-center shrink-0">
+              <LogOut size={18} className="text-white" />
+            </span>
+            <div>
+              <p className="text-sm font-bold text-ink">Sign out</p>
+              <p className="text-[11px] text-warm-500 mt-0.5">End this session on this device</p>
+            </div>
+          </button>
         </div>
       </div>
 

@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node --test --test-concurrency=1 sms/*.test.js"
+    "test": "node --test --test-concurrency=1 sms/*.test.js test/*.test.js",
+    "key:create": "node scripts/key.js create",
+    "key:list": "node scripts/key.js list",
+    "key:revoke": "node scripts/key.js revoke"
   },
   "dependencies": {
     "axios": "^1.18.1",

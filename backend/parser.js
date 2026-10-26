@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const { toFile } = require('openai');
 require('dotenv').config();
 const { log, logError, preview } = require('./logger');
+const { todayColombo } = require('./time');
 
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
 const GROQ_TEXT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -27,7 +28,7 @@ function buildSystemPrompt(categories) {
   const incomeCategories     = categories.filter(c => c.type === 'income').map(c => c.name).join(', ');
   const expenseCategories    = categories.filter(c => c.type === 'expense' || !c.type).map(c => c.name).join(', ');
   const investmentCategories = categories.filter(c => c.type === 'investment').map(c => c.name).join(', ');
-  const today = new Date().toLocaleDateString('sv-SE');
+  const today = todayColombo();
 
   return `You are Kash — parse Sri Lankan personal finance chat into JSON only. No markdown, no prose outside JSON.
 

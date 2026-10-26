@@ -9,6 +9,8 @@
  */
 
 const db = require('./db');
+const { getPending, setPending, clearPending } = require('./pending');
+const { todayColombo, daysAgoColombo } = require('./time');
 const { parseTextMessage, parseImageMessage } = require('./parser');
 const { log, logError, preview, summarizeParsed } = require('./logger');
 const {
@@ -28,35 +30,9 @@ const {
   buildCategoryBarConfig,
 } = require('./charts');
 
-// Pending clarifications: when Kash asks a follow-up, the next message is merged with the original.
-// Keyed by channel:chatId. In-memory is enough for a single-user bot; TTL avoids stale merges.
-const PENDING_TTL_MS = 10 * 60 * 1000;
-const pendingByChat = new Map();
+// Pending clarifications live in SQLite (pending.js) with a 10-minute expiry.
 
-function pendingKey(channel, chatId) {
-  return `${channel}:${chatId || 'default'}`;
-}
-
-function getPending(channel, chatId) {
-  const key = pendingKey(channel, chatId);
-  const entry = pendingByChat.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.at > PENDING_TTL_MS) {
-    pendingByChat.delete(key);
-    return null;
-  }
-  return entry;
-}
-
-function setPending(channel, chatId, text) {
-  pendingByChat.set(pendingKey(channel, chatId), { text, at: Date.now() });
-}
-
-function clearPending(channel, chatId) {
-  pendingByChat.delete(pendingKey(channel, chatId));
-}
-
-function todayStr()     { return new Date().toLocaleDateString('sv-SE'); }
+function todayStr()     { return todayColombo(); }
 function thisMonthStr() { return todayStr().slice(0, 7); }
 
 function prevMonth(month) {
@@ -223,9 +199,7 @@ async function handleQuery(parsed, today, thisMonth, sender, channel) {
         break;
       }
       case 'this_week': {
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 6);
-        const weekStart = weekAgo.toLocaleDateString('sv-SE');
+        const weekStart = daysAgoColombo(6);
         const txs = db.getTransactions({ limit: 500 }).filter(t => t.date >= weekStart);
         const total = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
         await sender.sendText(

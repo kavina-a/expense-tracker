@@ -5,6 +5,57 @@ A personal, single-user expense tracker that lives in WhatsApp. Send a message d
 
 ---
 
+## Access and security
+
+Every `/api/*` route needs credentials, except `/health`, `/privacy`, `/terms` and the two bot webhooks (`/webhook`, `/telegram`), which keep their own secrets. An unknown `/api` path also answers `401`, so nobody can probe which routes exist.
+
+### Dashboard login
+
+Set `DASHBOARD_PASSWORD` (in `backend/.env` locally, and in Railway variables). The dashboard shows a sign-in page; a correct password sets an `httpOnly`, `SameSite=Strict` cookie that lasts 30 days. No key is ever placed in the browser bundle. After 5 wrong passwords from one address (or 20 overall) sign-in is locked for 15 minutes. Without `DASHBOARD_PASSWORD` set, sign-in answers `503`. Profile → **Sign out** ends the session.
+
+Behind Vercel the cookie is set over HTTPS and marked `Secure` automatically. Set `COOKIE_SECURE=true|false` only if you need to force it.
+
+For local development, run the backend locally and leave `VITE_API_URL` unset, so the browser talks to the Vite proxy on the same origin. Pointing the dev server at a remote backend makes the cookie cross-site and sign-in won't stick.
+
+### API keys (for Ledger and the SMS Shortcut)
+
+```bash
+cd backend
+npm run key:create -- --name ledger   --scope agent    # shown once, never stored in plain text
+npm run key:create -- --name shortcut --scope ingest
+npm run key:list
+npm run key:revoke -- --id 3
+```
+
+Run these where the production database lives (on Railway, the service shell), so they write to the same file the server reads. Send a key as `Authorization: Bearer stk_…` (or `X-API-Key`).
+
+| Scope | Can do |
+|---|---|
+| `full` | Everything, including backup and restore |
+| `agent` | Read-only `GET`s, plus `GET /api/agent/inbox`. Cannot read the full backup. |
+| `ingest` | The SMS routes only |
+
+### Where prompts go
+
+`NOTIFY_CHANNEL=ledger` (default) turns every prompt into a question or escalation for Ledger to read from `GET /api/agent/inbox`. `NOTIFY_CHANNEL=telegram` keeps the original Telegram flow. See `SMS_INGEST.md`.
+
+### Environment variables added
+
+| Variable | Purpose |
+|---|---|
+| `DASHBOARD_PASSWORD` | Dashboard sign-in |
+| `NOTIFY_CHANNEL` | `ledger` (default) or `telegram` |
+| `FRONTEND_URL` | Allowed CORS origin (exact match; no wildcards any more) |
+| `COOKIE_SECURE` | Optional override for the cookie's `Secure` flag |
+
+### Data safety and time
+
+- Before the first new database migration runs, a full copy is written to `backups/` next to the database (on Railway: `/app/data/backups/`) and its path is logged. Migrations only add tables and columns.
+- All dates and months use Asia/Colombo time, whatever timezone the server runs in.
+- `npm test` runs the backend tests.
+
+---
+
 ## Quick Start
 
 ### 1. Clone and install

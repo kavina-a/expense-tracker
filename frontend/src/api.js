@@ -11,12 +11,16 @@ async function req(path, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
+  if (res.status === 401) window.dispatchEvent(new Event('auth-required'))
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || 'Request failed')
   }
   return res.status === 204 ? null : res.json()
 }
+
+// Session
+export const logout = () => req('/auth/logout', { method: 'POST' })
 
 // Transactions
 export const getTransactions = (params = {}) => {

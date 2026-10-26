@@ -2,15 +2,21 @@
 
 Bank SMS forwarded from an iPhone Shortcut is parsed on the server and written into the same `transactions` table the Telegram bot uses. `source` is `sms` for these rows and `telegram` for new Telegram messages. A reversed debit stays in the table with `status = 'reversed'` and drops out of totals and the default transaction list, so a voided charge does not keep counting as spend.
 
-Set `SMS_INGEST_SECRET` in `backend/.env` (and in Railway variables) before using the endpoint. If it is unset, the route responds `503`.
+Authenticate with **either** of these. If neither is configured, the route responds `503`.
+
+- An **ingest API key** (preferred): `Authorization: Bearer <key>`. Create one with `npm run key:create -- --name shortcut --scope ingest` (see the README). An ingest key can only reach the SMS routes.
+- The legacy shared secret: set `SMS_INGEST_SECRET` in `backend/.env` (and in Railway variables) and send it as `X-SMS-Secret`. It keeps working so the existing Shortcut doesn't break, and it only unlocks the SMS routes, not the rest of the API.
+
+`GET /api/sms-review` also accepts a `full` or `agent` key and a dashboard session. Resolving a review (`POST`) needs the secret, an `ingest` or `full` key, or a dashboard session; an `agent` key gets `403`.
 
 ## Endpoint
 
 `POST /api/sms-ingest`
 
-Header:
+Header (one of):
 
 ```
+Authorization: Bearer <ingest key>
 X-SMS-Secret: <SMS_INGEST_SECRET>
 Content-Type: application/json
 ```
@@ -26,7 +32,7 @@ Body — send the raw SMS. Do not pre-parse it in Shortcuts.
 
 `received_at` is optional. The ledger date comes from the date inside the SMS, not from this field.
 
-`401` means the header is missing or wrong. `400` means `text` is empty or `received_at` is not a parseable timestamp.
+`401` means the credentials are missing or wrong. `403` means a valid key whose scope can't use this route. `400` means `text` is empty or `received_at` is not a parseable timestamp.
 
 ### What comes back
 
@@ -88,9 +94,18 @@ Masked numbers are stored only in canonical form: first 4 digits, `***`, last 2 
 
 When nothing matches, the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODEL` the Telegram parser uses) to pick one category the ledger already uses. A name it returns that is on that list is saved on the expense and written back into `category_rules`, so the next SMS for that merchant does not call the model. `unsure`, an invented name, or a Groq failure leaves `category` as `pending_category`. That is not the same as `Uncategorized`: pending means the question is still open. `Uncategorized` is only written when you tap that button in Telegram.
 
+## Where prompts go: `NOTIFY_CHANNEL`
+
+`NOTIFY_CHANNEL` decides who gets asked about a new SMS expense.
+
+- `ledger` (default): nothing is sent to Telegram. Each prompt becomes a row in the `questions` table (`subject = 'txn'`, `options = {"kind": "category" | "note" | "mute", "choices": [...]}`), and Ledger reads it from `GET /api/agent/inbox`. The result of the ingest call has `notify_reason: "ledger_question"`. A muted merchant still gets no prompt. One question per expense, even if the SMS is processed again.
+- `telegram`: the original flow described below, unchanged.
+
+**Heads-up:** Ledger can read these questions now but can't answer them through the API until a later phase. Until then, run production with `NOTIFY_CHANNEL=telegram` if you still want to answer from your phone.
+
 ## Telegram notes
 
-Every new SMS expense is sent to `MY_TELEGRAM_CHAT_ID`, including ones that already have a category. The message has the merchant, amount, and category (or category buttons when it is still `pending_category`), plus **👍 No note needed**. Reply to that message to set `note` on that expense. The note is never filled in by the model.
+(These apply when `NOTIFY_CHANNEL=telegram`.) Every new SMS expense is sent to `MY_TELEGRAM_CHAT_ID`, including ones that already have a category. The message has the merchant, amount, and category (or category buttons when it is still `pending_category`), plus **👍 No note needed**. Reply to that message to set `note` on that expense. The note is never filled in by the model.
 
 Ignoring the message changes nothing. **No note needed** sets `note_reviewed` and does not set `note`. Three of those taps in a row for the same merchant, with no note in between, asks whether to mute that merchant. **Yes, mute** stops future note messages for that merchant; category matching still runs. **No, keep asking** waits for another three taps before asking again.
 
