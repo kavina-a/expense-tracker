@@ -491,6 +491,7 @@ if (fs.existsSync(FRONTEND_DIST)) {
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) app.listen(PORT, () => {
+  require('./sms/heartbeat').startHeartbeat();
   const info = db.getDbInfo();
   console.log(`\n🚀  Money Tracker running`);
   console.log(`💾  Database:         ${info.dbPath}`);

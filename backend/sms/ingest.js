@@ -4,6 +4,7 @@ const { parseSms } = require('./parsers');
 const { canonicalizeAccount, accountTokensIn } = require('./account');
 const { resolveSmsCategory, guessMerchantCategory } = require('./categorize');
 const { notifySmsExpense } = require('./telegramNotify');
+const notifyHub = require('../notify');
 
 // Identity match only: source=sms, same canonical account, exact amount,
 // and (when the message has one) the same normalized merchant.
@@ -95,6 +96,16 @@ function ownTransfer(text) {
 
 function skippedNotify(result, reason) {
   return { ...result, notified: false, notify_reason: reason };
+}
+
+function recordSkip(raw, reason, parsed = null, detail = null) {
+  db.insertSmsSkipped({
+    sms_raw_id: raw.id,
+    reason,
+    kind: parsed?.kind || null,
+    detail,
+    received_at: raw.received_at,
+  });
 }
 
 function ignoredResult(raw, parsed, reason) {
@@ -210,6 +221,7 @@ function reverseOne(parsed, raw, key, debit) {
 }
 
 function linkExisting(parsed, raw, key, debit) {
+  recordSkip(raw, 'duplicate_reversal', parsed, `second SMS for debit #${debit.id}`);
   const row = db.insertSmsReversal(reversalPayload(parsed, raw, key, {
     status: 'linked',
     transaction_id: debit.id,
@@ -359,6 +371,7 @@ async function insertPurchase(parsed, raw, key, text, options = {}) {
 }
 
 function duplicateReversal(raw, parsed, row) {
+  recordSkip(raw, 'duplicate_reversal', parsed, `same as reversal #${row.id}`);
   const hydrated = hydrateReversal(row);
   return skippedNotify({
     ...baseResult(raw, parsed),
@@ -378,8 +391,9 @@ async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, c
   if (parsed?.account_masked) rememberAccounts([parsed.account_masked], parsed.bank);
   if (!parsed) parsed = ownTransfer(text);
 
+  // One-time codes are never kept: the stored copy has the code blanked out.
   const raw = db.insertSmsRaw({
-    text,
+    text: parsed?.type === 'otp' ? parsed.redacted_text : text,
     received_at,
     parsed: Boolean(parsed),
     parser_match: parsed ? parsed.parser_match : null,
@@ -389,8 +403,52 @@ async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, c
     return ignoredResult(raw, parsed, parsed.ignore_reason || 'ignored');
   }
 
+  if (parsed?.type === 'otp') {
+    recordSkip(raw, 'otp', parsed);
+    return skippedNotify({
+      ...baseResult(raw, parsed),
+      action: 'skipped',
+      skip_reason: 'otp',
+      message: 'One-time code. Not stored, not counted.',
+    }, 'skipped');
+  }
+
+  if (parsed?.type === 'declined') {
+    recordSkip(raw, 'declined', parsed, parsed.decline_reason);
+    if (parsed.signal === 'low_balance') {
+      await notifyHub.escalate({
+        type: 'low_balance',
+        severity: 'low',
+        evidence: {
+          summary: `A ${money(parsed.amount)} LKR card payment at ${parsed.merchant} was declined for insufficient funds.`,
+          account: parsed.account_masked,
+          balance: parsed.balance_after,
+          amount: parsed.amount,
+        },
+        dedupeKey: `low_balance:${parsed.account_masked}:${parsed.occurred_at.slice(0, 10)}`,
+      }, { chatId });
+    }
+    return skippedNotify({
+      ...baseResult(raw, parsed),
+      action: 'skipped',
+      skip_reason: 'declined',
+      message: 'Declined card payment. Nothing was charged, so nothing is booked.',
+    }, 'skipped');
+  }
+
   if (!parsed) {
     log('warn', 'SmsIngest', 'unparsed', { sms_raw_id: raw.id, preview: preview(text, 140) });
+    recordSkip(raw, 'unparsed', null, preview(text, 140));
+    await notifyHub.escalate({
+      type: 'parser_failure',
+      severity: 'medium',
+      evidence: {
+        summary: 'An SMS did not match any known bank format.',
+        sms_raw_id: raw.id,
+        preview: preview(text, 140),
+      },
+      dedupeKey: `parser_failure:${raw.id}`,
+    }, { chatId });
     return skippedNotify({
       ...baseResult(raw, null),
       action: 'unparsed',

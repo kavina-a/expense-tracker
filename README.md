@@ -53,6 +53,8 @@ Send a key as `Authorization: Bearer stk_…` (or `X-API-Key`). Other commands, 
 | `DASHBOARD_PASSWORD` | Dashboard sign-in |
 | `API_KEY_SEEDS` | Hashes of keys made with `npm run key:generate` |
 | `NOTIFY_CHANNEL` | `ledger` (default) or `telegram` |
+| `HEARTBEAT_HOURS` | Hours of SMS silence before a `heartbeat_missing` escalation (default 72) |
+| `SMS_FIXTURES_DIR` | Optional: where tests look for private bank SMS fixtures |
 | `FRONTEND_URL` | Allowed CORS origin (exact match; no wildcards any more) |
 | `COOKIE_SECURE` | Optional override for the cookie's `Secure` flag |
 

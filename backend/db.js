@@ -281,6 +281,23 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_questions_open ON questions(resolution, priority, created_at);
     `,
   },
+  {
+    name: '002_sms_skipped',
+    sql: `
+      -- Every SMS that was received but deliberately not booked, and why.
+      CREATE TABLE IF NOT EXISTS sms_skipped (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        sms_raw_id  INTEGER,
+        reason      TEXT    NOT NULL,
+        kind        TEXT,
+        detail      TEXT,
+        received_at TEXT,
+        created_at  TEXT    NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sms_skipped_reason ON sms_skipped(reason, created_at);
+      CREATE INDEX IF NOT EXISTS idx_sms_raw_received ON sms_raw(received_at);
+    `,
+  },
 ];
 
 function appliedMigrationNames() {
@@ -1099,6 +1116,32 @@ function insertSmsRaw({ text, received_at, parsed, parser_match }) {
   return db.prepare('SELECT * FROM sms_raw WHERE id = ?').get(info.lastInsertRowid);
 }
 
+const SKIP_REASONS = ['otp', 'promo', 'declined', 'unparsed', 'duplicate_reversal'];
+
+function insertSmsSkipped({ sms_raw_id = null, reason, kind = null, detail = null, received_at = null }) {
+  if (!SKIP_REASONS.includes(reason)) throw new Error(`Unknown skip reason: ${reason}`);
+  const info = db.prepare(`
+    INSERT INTO sms_skipped (sms_raw_id, reason, kind, detail, received_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(sms_raw_id, reason, kind, detail == null ? null : String(detail), received_at, new Date().toISOString());
+  return db.prepare('SELECT * FROM sms_skipped WHERE id = ?').get(info.lastInsertRowid);
+}
+
+function listSmsSkipped({ reason = null, limit = 200 } = {}) {
+  if (reason) {
+    return db.prepare('SELECT * FROM sms_skipped WHERE reason = ? ORDER BY id DESC LIMIT ?').all(reason, limit);
+  }
+  return db.prepare('SELECT * FROM sms_skipped ORDER BY id DESC LIMIT ?').all(limit);
+}
+
+function countSmsReceivedSince(isoSince) {
+  return db.prepare('SELECT COUNT(*) AS n FROM sms_raw WHERE received_at >= ?').get(isoSince).n;
+}
+
+function lastSmsReceivedAt() {
+  return db.prepare('SELECT MAX(received_at) AS at FROM sms_raw').get().at || null;
+}
+
 function getSmsRaw(id) {
   return db.prepare('SELECT * FROM sms_raw WHERE id = ?').get(id) || null;
 }
@@ -1442,6 +1485,10 @@ module.exports = {
   getTransactionById,
   getTransactionsByIds,
   insertSmsRaw,
+  insertSmsSkipped,
+  listSmsSkipped,
+  countSmsReceivedSince,
+  lastSmsReceivedAt,
   getSmsRaw,
   findTransactionByDedupeKey,
   findSmsReversalByDedupeKey,

@@ -123,6 +123,34 @@ Merchants in `muted_merchants` skip the note message only.
 
 `Reason:ECOM REV/002117/ID:113007` is stored as `reference` on the reversal and copied onto the debit when that debit has no reference yet. Matching does not use it yet — there are not enough samples to know whether `113007` is stable per transaction or just a sequence number.
 
+## What the parser understands
+
+HNB sends 13 kinds of SMS. `kind` on the parsed result says which:
+
+| kind | what it is | what happens today |
+|---|---|---|
+| `card_debit` (`channel` online or pos) | card payment alert | booked as an expense |
+| `card_reversal`, `ecom_reversal_credit` | the two SMS HNB sends for one reversal | first reverses the expense, second is recorded as `duplicate_reversal` |
+| `declined` | payment refused | never booked; one `low_balance` escalation per account per day |
+| `bill_payment` | `MB BillPmt/...` | booked as an expense |
+| `interest_credit` | `Int.Pd` | ignored |
+| `mb_transfer_debit`, `account_credit`, `salary_credit`, `merchant_adjustment_credit`, `inbound_transfer_notice` | parsed, with the remark/payer/original date extracted | logged only until the transaction state machine lands |
+| `otp` | verification code | skipped; the code is blanked in `sms_raw` |
+
+Spacing varies between messages (`Location :` vs `Location:`, `Av.Bal` vs `Avl Bal`, `credit ed`, `Bal:LKR` vs `Bal: LKR`); the parser tolerates all of them. Anything it cannot read is stored in `sms_raw`, listed in `sms_skipped` as `unparsed`, and raises a `parser_failure` escalation.
+
+### `sms_skipped`
+
+Every SMS that is received but not booked gets a row with a reason: `otp`, `promo`, `declined`, `unparsed` or `duplicate_reversal`, so nothing disappears silently.
+
+### Heartbeat
+
+If no SMS arrives for `HEARTBEAT_HOURS` (default 72) after a stretch averaging at least one a day, one `heartbeat_missing` escalation is raised for that silence. It usually means the iOS Shortcut stopped running. Checked hourly.
+
+### Fixtures
+
+Real SMS samples live in `backend/sms/fixtures/<bank>/` and are **gitignored** (the repo is public). `npm test` parses every message in them against its `expected_parse` and replays the HNB timeline through ingest; both skip when the folder is absent. `SMS_FIXTURES_DIR` points the tests elsewhere. `backend/sms/fixtures.sha256` records the file hashes.
+
 ## Adding another bank
 
 Add `backend/sms/parsers/<bank>.js`:
@@ -153,6 +181,6 @@ module.exports = {
 };
 ```
 
-Register it in `backend/sms/parsers/index.js` by appending the module to `banks`. Matchers run in array order, first hit wins. A `purchase` becomes an expense. `reversal` and `credit_confirmation` go through the same correlation rules and are not inserted as their own ledger rows.
+Start from `backend/sms/parsers/_template.js`. Put real samples in `backend/sms/fixtures/<bank>/*.json` and the generic fixture test checks them with no test code to write. Register it in `backend/sms/parsers/index.js` by appending the module to `banks`. Matchers run in array order, first hit wins. A `purchase` becomes an expense. `reversal` and `credit_confirmation` go through the same correlation rules and are not inserted as their own ledger rows.
 
 Run the parser tests with `npm test` from `backend/`.

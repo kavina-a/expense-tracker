@@ -23,6 +23,20 @@ Plain-English notes on each phase of the autonomy work.
 
 **Tests:** 105 pass, and none of them touch the network any more (a few existing tests were quietly sending merchant names to Groq with a fake key). New ones check that every `/api` route (found by walking Express's own route list, so future routes are covered automatically) answers `401` without credentials, each key scope, revoked keys, the login cookie and lockout, session expiry, the cross-site write guard, the Colombo date rollover, expiring follow-ups, the migration backup, and both notification channels.
 
+## Phase 1 — Reading every kind of bank SMS
+
+- **The parser now understands all 13 HNB message kinds** seen in your real messages, including the ones with odd spacing (`Location :`, `Avl Bal`, `credit ed`). It only uses shapes that appear in the recordings; anything else stays "unparsed" instead of being guessed.
+- **OTPs are never kept.** The code is blanked before the message is stored.
+- **Declined payments are never booked.** They raise at most one low-balance escalation per account per day.
+- **Nothing is dropped silently.** A new `sms_skipped` table records every SMS that was received but not booked, with the reason. A message nothing can read raises a `parser_failure` escalation for Ledger.
+- **Heartbeat.** If the SMS stop arriving for 72 hours (`HEARTBEAT_HOURS`) on an account that normally gets about one a day, Ledger is told once.
+- **Adding a bank got easier:** a parser template, and a test that checks any `fixtures/<bank>/*.json` automatically.
+- **The real SMS samples are gitignored** because the repo is public; the tests skip when they aren't there.
+
+**New table:** `sms_skipped` (migration `002_sms_skipped`, additive; a database backup is written first as before).
+
+**Tests:** per-kind unit tests, the fixture parser check, skip/heartbeat tests, and the first part of the 62-message replay (OTPs, declines, low-balance, duplicate reversal SMS and no unparsed messages all match what you recorded). Later phases extend the replay.
+
 ### To purge the old backup from git history (you run this; I haven't)
 
 ```bash

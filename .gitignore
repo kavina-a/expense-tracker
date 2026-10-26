@@ -6,3 +6,6 @@ backend/.env
 *.db*
 backend/backups/
 .DS_Store
+
+# Real bank SMS fixtures contain personal data; the repo is public.
+backend/sms/fixtures/
