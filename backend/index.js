@@ -12,6 +12,7 @@ const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDism
 const { apiAuth, mountAuthRoutes } = require('./auth');
 const { seedKeysFromEnv } = require('./auth/keys');
 const { mountAgentRoutes } = require('./agent');
+const { mountV1 } = require('./v1');
 const { todayColombo, monthColombo, yearColombo } = require('./time');
 
 const app = express();
@@ -48,6 +49,7 @@ app.use(cors({
 app.use('/api', apiAuth);
 mountAuthRoutes(app);
 mountAgentRoutes(app);
+mountV1(app);
 
 const VALID_TYPES = ['income', 'expense', 'investment'];
 

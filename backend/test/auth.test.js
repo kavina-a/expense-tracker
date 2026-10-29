@@ -214,6 +214,20 @@ describe('API keys', () => {
     assert.deepEqual(mine.map((e) => e.evidence.summary), ['first', 'second']);
     assert.equal(mine[1].severity, 'high');
   });
+
+  it('serves OpenAPI 3.1 at /api/v1/openapi.json when the key is sent', async () => {
+    const { key } = createKey({ name: 'agent-spec', scope: 'agent' });
+    assert.equal((await call('/api/v1/openapi.json')).status, 401);
+    const res = await call('/api/v1/openapi.json', { headers: bearer(key) });
+    assert.equal(res.status, 200);
+    const spec = await res.json();
+    assert.equal(spec.openapi, '3.1.0');
+    assert.ok(spec.paths['/agent/inbox']);
+    assert.equal(spec.servers[0].url.endsWith('/api/v1'), true);
+    const inbox = await call('/api/v1/agent/inbox', { headers: bearer(key) });
+    assert.equal(inbox.status, 200);
+    assert.equal((await inbox.json()).ok, true);
+  });
 });
 
 describe('dashboard login', () => {
