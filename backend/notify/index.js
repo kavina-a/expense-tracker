@@ -7,6 +7,7 @@
 //
 // Detection stays in code. This module only decides who gets told.
 
+const crypto = require('crypto');
 const db = require('../db').connection;
 const { isoNow } = require('../time');
 const { log } = require('../logger');
@@ -67,6 +68,12 @@ async function escalate({ type, severity = 'medium', evidence = {}, dedupeKey = 
   const created = inserted.changes > 0;
   if (created) log('info', 'Notify', 'escalation_created', { id: row.id, type, severity, channel: channel() });
 
+  if (created && process.env.LEDGER_WEBHOOK_URL) {
+    try { await postLedgerWebhook(row); } catch (err) {
+      log('warn', 'Notify', 'ledger_webhook_failed', { id: row.id, error: err.message });
+    }
+  }
+
   if (created && channel() === 'telegram') {
     const chatId = deps.chatId || process.env.MY_TELEGRAM_CHAT_ID;
     if (chatId) {
@@ -99,6 +106,35 @@ function ask({ subject, subjectId = null, prompt, options = null, priority = 0, 
   );
   if (inserted.changes) log('info', 'Notify', 'question_created', { id: row.id, subject, subjectId });
   return { created: inserted.changes > 0, question: row };
+}
+
+async function postLedgerWebhook(escalation) {
+  const url = process.env.LEDGER_WEBHOOK_URL;
+  if (!url) return;
+  const body = JSON.stringify({
+    type: 'escalation',
+    escalation: {
+      id: escalation.id,
+      type: escalation.type,
+      severity: escalation.severity,
+      status: escalation.status,
+      evidence: escalation.evidence,
+      created_at: escalation.created_at,
+    },
+  });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const secret = process.env.LEDGER_WEBHOOK_SECRET || '';
+  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-timestamp': timestamp,
+      'x-signature': `sha256=${signature}`,
+    },
+    body,
+  });
+  if (!res.ok) throw new Error(`Ledger webhook ${res.status}`);
 }
 
 function listOpenEscalations(limit = 100) {
