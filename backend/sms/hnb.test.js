@@ -87,7 +87,9 @@ describe('HNB parser', () => {
 
   it('does not treat a non-reversal credit as a reversal', () => {
     const text = 'LKR 5000.00 credited to Ac No:20802XXXXX39 on 27/09/26 05:54:22 Reason:SALARY Bal:LKR 11,762.17';
-    assert.equal(parseSms(text), null);
+    const parsed = parseSms(text);
+    assert.equal(parsed.kind, 'account_credit');
+    assert.notEqual(parsed.type, 'credit_confirmation');
   });
 
   it('returns null for text that matches nothing', () => {
@@ -130,7 +132,7 @@ describe('HNB parser', () => {
     assert.equal(parsed.parser_match, 'hnb_bill_payment');
     assert.equal(parsed.type, 'purchase');
     assert.equal(parsed.direction, 'debit');
-    assert.equal(parsed.merchant, 'MOBITEL BILL PAYMENT');
+    assert.equal(parsed.merchant, 'MOBITEL');
     assert.equal(parsed.account_masked, '2080***39');
     assert.equal(cents(parsed.amount), 159800);
     assert.equal(cents(parsed.balance_after), 1597558);

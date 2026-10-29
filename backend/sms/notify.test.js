@@ -509,7 +509,7 @@ describe('SMS category resolution and Telegram notes', () => {
       { text: realInternetUber, merchant: 'UBER', amount: 670.59 },
       { text: realInternetUberOct18, merchant: 'UBER', amount: 1405.83 },
       { text: realPurchaseBarista, merchant: 'BARISTA - CARGILLS SQUARE', amount: 715 },
-      { text: realBillMobitel, merchant: 'MOBITEL BILL PAYMENT', amount: 1598 },
+      { text: realBillMobitel, merchant: 'MOBITEL', amount: 1598 },
       { text: realInternetMintpay, merchant: 'MINTPAY PVT LTD', amount: 2181.89 },
       { text: realKeellsWithCommas, merchant: 'KEELLS SUPER, COLOMBO 03', amount: 500 },
     ];

@@ -79,7 +79,8 @@ describe('SMS ingest', () => {
     assert.equal(purchase.action, 'inserted');
     assert.equal(purchase.category, 'Transport');
     assert.equal(purchase.transaction.source, 'sms');
-    assert.equal(purchase.transaction.status, 'posted');
+    // Uber charges start as holds; the settle step may post them straight after (old dates).
+    assert.equal(purchase.transaction.status, 'provisional');
     assert.equal(purchase.transaction.type, 'expense');
 
     assert.equal(reversal.action, 'reversed');
@@ -90,7 +91,7 @@ describe('SMS ingest', () => {
     const rows = smsExpenseRows(20765, 'UBER');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].id, purchase.transaction_id);
-    assert.equal(rows[0].status, 'reversed');
+    assert.equal(rows[0].status, 'voided');
     assert.equal(rows[0].type, 'expense');
     assert.equal(rows[0].reference, 'ECOM REV/002117/ID:113007');
 
@@ -99,7 +100,8 @@ describe('SMS ingest', () => {
 
     const links = db.listSmsReversalsForTransaction(purchase.transaction_id);
     assert.equal(links.length, 2);
-    assert.ok(links.every((row) => row.status === 'linked' && row.transaction_id === purchase.transaction_id));
+    assert.deepEqual(links.map((row) => row.status).sort(), ['duplicate', 'linked']);
+    assert.ok(links.every((row) => row.transaction_id === purchase.transaction_id));
 
     const income = db.getTransactions({ includeReversed: true, type: 'income', limit: 1000 })
       .filter((row) => row.source === 'sms');
@@ -135,7 +137,7 @@ describe('SMS ingest', () => {
 
     const resolved = resolveSmsReview(reversal.review_id, first.transaction_id);
     assert.equal(resolved.action, 'reversed');
-    assert.equal(db.getTransactionById(first.transaction_id).status, 'reversed');
+    assert.equal(db.getTransactionById(first.transaction_id).status, 'voided');
     assert.equal(db.getTransactionById(second.transaction_id).status, 'posted');
   });
 
@@ -184,19 +186,20 @@ describe('SMS ingest', () => {
   });
 
   it('ignores interest credits and transfers between accounts it has already seen', async () => {
-    const before = db.getTransactions({ includeReversed: true, limit: 1000 }).length;
     const interestA = await ingest({
       text: 'LKR 103.49 credited to Ac No:20802XXXXX64 on 27/09/26 21:24:32 Reason:20802XXXXX64:Int.Pd: 31-08-2026 to 27-09-2026 Bal:LKR 97,140.60',
     });
     const interestB = await ingest({
       text: 'LKR 13.16 credited to Ac No:20802XXXXX39 on 27/09/26 21:40:31 Reason:20802XXXXX39:Int.Pd: 31-08-2026 to 27-09-2026 Bal:LKR 11,772.25',
     });
-    assert.equal(interestA.action, 'ignored');
-    assert.equal(interestA.ignore_reason, 'interest');
-    assert.equal(interestB.action, 'ignored');
+    assert.equal(interestA.action, 'inserted');
+    assert.equal(interestA.transaction.category, 'Interest');
+    assert.equal(interestA.transaction.exclude_from_earned, 1);
+    assert.equal(interestB.action, 'inserted');
     assert.equal(db.isOwnAccount('2080***64'), true);
     assert.equal(db.isOwnAccount('2080***39'), true);
 
+    const before = db.getTransactions({ includeReversed: true, limit: 1000 }).length;
     const transfer = await ingest({
       text: 'LKR 5000.00 debited from Ac No:20802XXXXX39 on 28/09/26 10:00:00 Reason:20802XXXXX64 Bal:LKR 6,772.25',
     });
@@ -237,7 +240,7 @@ describe('SMS ingest', () => {
     assert.equal(reversal.action, 'linked_existing');
     assert.equal(reversal.transaction_id, purchase.transaction_id);
     assert.equal(smsExpenseRows(8800, 'UBER').length, 1);
-    assert.equal(smsExpenseRows(8800, 'UBER')[0].status, 'reversed');
+    assert.equal(smsExpenseRows(8800, 'UBER')[0].status, 'voided');
   });
 
   it('logs real HNB-prefixed purchases, comma merchants, and BillPmt debits', async () => {
@@ -245,7 +248,7 @@ describe('SMS ingest', () => {
       { text: realInternetUber, merchant: 'UBER', amount: 67059, date: '2026-10-19', occurred: '2026-10-19T17:06:00', match: 'hnb_purchase_alert' },
       { text: realInternetUberOct18, merchant: 'UBER', amount: 140583, date: '2026-10-18', occurred: '2026-10-18T18:03:00', match: 'hnb_purchase_alert' },
       { text: realPurchaseBarista, merchant: 'BARISTA - CARGILLS SQUARE', amount: 71500, date: '2026-10-19', occurred: '2026-10-19T09:12:00', match: 'hnb_purchase_alert' },
-      { text: realBillMobitel, merchant: 'MOBITEL BILL PAYMENT', amount: 159800, date: '2026-10-19', occurred: '2026-10-19T10:18:43', match: 'hnb_bill_payment' },
+      { text: realBillMobitel, merchant: 'MOBITEL', amount: 159800, date: '2026-10-19', occurred: '2026-10-19T10:18:43', match: 'hnb_bill_payment' },
       { text: realInternetMintpay, merchant: 'MINTPAY PVT LTD', amount: 218189, date: '2026-10-19', occurred: '2026-10-19T14:24:00', match: 'hnb_purchase_alert' },
       { text: realKeellsWithCommas, merchant: 'KEELLS SUPER, COLOMBO 03', amount: 50000, date: '2026-10-19', occurred: '2026-10-19T10:00:00', match: 'hnb_purchase_alert' },
     ];
