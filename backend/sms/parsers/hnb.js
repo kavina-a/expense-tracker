@@ -6,6 +6,13 @@ function normalizeMerchant(value) {
   return text ? text.toUpperCase() : null;
 }
 
+// The merchant exactly as the bank sent it (mixed case kept); matching uses the uppercase key.
+function rawMerchant(value) {
+  if (value == null) return null;
+  const text = String(value).trim().replace(/\s+/g, ' ');
+  return text || null;
+}
+
 function parseAmount(raw) {
   if (raw == null) return null;
   const n = Number(String(raw).replace(/,/g, ''));
@@ -36,6 +43,7 @@ function parsed(fields) {
     channel: fields.channel ?? null,
     account_masked: fields.account_masked,
     merchant: fields.merchant ?? null,
+    merchant_raw: fields.merchant_raw ?? null,
     amount: fields.amount,
     direction: fields.direction,
     balance_after: fields.balance_after ?? null,
@@ -72,6 +80,7 @@ const purchaseAlert = {
       channel: /PURCHASE/i.test(text.slice(0, 40)) ? 'pos' : 'online',
       account_masked: canonicalizeAccount(account),
       merchant: normalizeMerchant(location),
+      merchant_raw: rawMerchant(location),
       amount: parseAmount(amount),
       direction: 'debit',
       balance_after: parseAmount(balance),
@@ -92,6 +101,7 @@ const reversalAlert = {
       kind: 'card_reversal',
       account_masked: canonicalizeAccount(account),
       merchant: normalizeMerchant(location),
+      merchant_raw: rawMerchant(location),
       amount: parseAmount(amount),
       direction: 'credit',
       balance_after: parseAmount(balance),
@@ -118,7 +128,8 @@ const billPayment = {
       type: 'purchase',
       kind: 'bill_payment',
       account_masked: canonicalizeAccount(fields.account),
-      merchant: normalizeMerchant(`${biller} bill payment`),
+      merchant: normalizeMerchant(biller),
+      merchant_raw: rawMerchant(biller),
       amount: parseAmount(fields.amount),
       direction: 'debit',
       balance_after: parseAmount(fields.balance),
@@ -263,18 +274,21 @@ const merchantAdjustment = {
     // when the first number cannot be a month.
     const [m, d] = Number(a) <= 12 ? [a, b] : [b, a];
     const pad = (v) => String(v).padStart(2, '0');
+    // A purchase month later than the SMS month belongs to the previous year.
+    const origYear = Number(m) > Number(month) ? String(Number(fullYear) - 1) : fullYear;
     const row = parsed({
       type: 'refund_credit',
       kind: 'merchant_adjustment_credit',
       account_masked: canonicalizeAccount(account),
       merchant: normalizeMerchant(merchant),
+      merchant_raw: rawMerchant(merchant),
       amount: parseAmount(amount),
       direction: 'credit',
       balance_after: parseAmount(balance),
       occurred_at: occurredAt(day, month, fullYear, time),
       reason: `ADJ FOR ECOM/${merchant.trim()}${a}/${b}`,
     });
-    return row ? { ...row, original_txn_date: `${fullYear}-${pad(m)}-${pad(d)}` } : null;
+    return row ? { ...row, original_txn_date: `${origYear}-${pad(m)}-${pad(d)}` } : null;
   },
 };
 
@@ -293,6 +307,7 @@ const declined = {
       kind: 'declined',
       account_masked: canonicalizeAccount(account),
       merchant: normalizeMerchant(location),
+      merchant_raw: rawMerchant(location),
       amount: parseAmount(amount),
       direction: 'none',
       balance_after: parseAmount(balance),

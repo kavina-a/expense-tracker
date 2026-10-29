@@ -132,7 +132,7 @@ describe('HNB parser', () => {
     assert.equal(parsed.parser_match, 'hnb_bill_payment');
     assert.equal(parsed.type, 'purchase');
     assert.equal(parsed.direction, 'debit');
-    assert.equal(parsed.merchant, 'MOBITEL BILL PAYMENT');
+    assert.equal(parsed.merchant, 'MOBITEL');
     assert.equal(parsed.account_masked, '2080***39');
     assert.equal(cents(parsed.amount), 159800);
     assert.equal(cents(parsed.balance_after), 1597558);

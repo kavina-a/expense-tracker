@@ -298,6 +298,93 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_sms_raw_received ON sms_raw(received_at);
     `,
   },
+  {
+    name: '003_transaction_states',
+    // Columns first (ALTER has no IF NOT EXISTS), then tables and seeds.
+    columns: {
+      transactions: [
+        ['merchant_raw', 'TEXT'],
+        ['kind', 'TEXT'],
+        ['sms_raw_id', 'INTEGER'],
+        ['final_of', 'INTEGER'],
+        ['linked_id', 'INTEGER'],
+        ['refunded_amount', 'REAL NOT NULL DEFAULT 0'],
+        ['settle_after', 'TEXT'],
+        ['note_source', 'TEXT'],
+        ['recurring_candidate', 'INTEGER NOT NULL DEFAULT 0'],
+        ['exclude_from_earned', 'INTEGER NOT NULL DEFAULT 0'],
+        ['needs_review', 'INTEGER NOT NULL DEFAULT 0'],
+      ],
+      sms_reversals: [
+        ['kind', 'TEXT'],
+        ['paired_with', 'INTEGER'],
+      ],
+    },
+    sql: `
+      -- Every state change (and type change) of a transaction, and who made it.
+      CREATE TABLE IF NOT EXISTS transaction_events (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id INTEGER NOT NULL,
+        from_state     TEXT,
+        to_state       TEXT,
+        actor          TEXT NOT NULL DEFAULT 'system',
+        reason         TEXT,
+        data           TEXT,
+        created_at     TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_txn_events_txn ON transaction_events(transaction_id, id);
+
+      -- Merchants whose card charge starts as a hold that can be replaced or cancelled.
+      CREATE TABLE IF NOT EXISTS hold_prone_merchants (
+        pattern              TEXT PRIMARY KEY,
+        settle_window_hours  REAL NOT NULL DEFAULT 12
+      );
+      INSERT OR IGNORE INTO hold_prone_merchants (pattern, settle_window_hours) VALUES ('UBER', 12);
+
+      -- Every account that sends bank SMS to this phone. Superset of own_accounts.
+      CREATE TABLE IF NOT EXISTS accounts (
+        account_masked TEXT PRIMARY KEY,
+        bank           TEXT NOT NULL DEFAULT 'hnb',
+        kind           TEXT,
+        nickname       TEXT,
+        purpose        TEXT,
+        own            INTEGER NOT NULL DEFAULT 1,
+        first_seen_at  TEXT NOT NULL
+      );
+      INSERT OR IGNORE INTO accounts (account_masked, bank, own, first_seen_at)
+        SELECT account_masked, bank, 1, first_seen_at FROM own_accounts;
+
+      -- Things waiting for their other half: an adjustment whose purchase has not
+      -- been seen, or a "You received" notice whose credit has not landed.
+      CREATE TABLE IF NOT EXISTS unmatched (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind              TEXT    NOT NULL,
+        sms_raw_id        INTEGER,
+        account_masked    TEXT,
+        amount            REAL,
+        merchant          TEXT,
+        payer             TEXT,
+        original_txn_date TEXT,
+        occurred_at       TEXT,
+        status            TEXT    NOT NULL DEFAULT 'open',
+        matched_txn_id    INTEGER,
+        question_id       INTEGER,
+        created_at        TEXT    NOT NULL,
+        resolved_at       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_unmatched_open ON unmatched(status, kind);
+
+      INSERT OR IGNORE INTO categories (name, icon, color, type, created_at)
+        VALUES ('Interest', '🏦', '#737373', 'income', datetime('now'));
+      INSERT OR IGNORE INTO categories (name, icon, color, type, created_at)
+        VALUES ('Salary', '💼', '#0A0A0A', 'income', datetime('now'));
+    `,
+  },
+  {
+    name: '004_unmatched_dedupe',
+    columns: { unmatched: [['dedupe_key', 'TEXT']] },
+    sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_unmatched_dedupe ON unmatched(dedupe_key);`,
+  },
 ];
 
 function appliedMigrationNames() {
@@ -334,6 +421,12 @@ function runMigrations() {
   const record = db.prepare('INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)');
   for (const migration of pending) {
     db.transaction(() => {
+      for (const [table, columns] of Object.entries(migration.columns || {})) {
+        const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+        for (const [column, type] of columns) {
+          if (!have.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+        }
+      }
       db.exec(migration.sql);
       record.run(migration.name, new Date().toISOString());
     })();
@@ -527,8 +620,16 @@ function getTransactionsByIds(ids) {
 // Sentinel pattern used by budget alert deduplication — never expose these
 const SENTINEL_FILTER = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')";
 // Reversed SMS debits stay in the table but must not keep counting as spend.
-const POSTED_FILTER = "AND COALESCE(status, 'posted') = 'posted'";
-const VISIBLE_FILTER = SENTINEL_FILTER + ' ' + POSTED_FILTER;
+//
+// What counts toward spend/earned: posted rows, and fully/partly refunded ones net
+// of what came back. Provisional holds, voided rows (legacy 'reversed' included),
+// ignored rows and interest (exclude_from_earned) never count. One place, so every
+// total, budget, chart and trend agrees.
+const COUNTED_STATES = "('posted', 'refunded')";
+const COUNTED_AMOUNT = '(amount - COALESCE(refunded_amount, 0))';
+const COUNTED_AMOUNT_T = '(t.amount - COALESCE(t.refunded_amount, 0))';
+const POSTED_FILTER = `AND COALESCE(status, 'posted') IN ${COUNTED_STATES}`;
+const VISIBLE_FILTER = SENTINEL_FILTER + ' ' + POSTED_FILTER + ' AND COALESCE(exclude_from_earned, 0) = 0';
 
 function getTransactions({ month, category, type, limit = 500, includeReversed = false } = {}) {
   const statusSql = includeReversed ? '' : ` ${POSTED_FILTER}`;
@@ -623,7 +724,7 @@ function buildSummary(rows, counts, month = null) {
 
 function getSummaryByMonth(month) {
   const rows = db.prepare(`
-    SELECT type, category, SUM(amount) as total
+    SELECT type, category, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE strftime('%Y-%m', date) = ? ${VISIBLE_FILTER}
     GROUP BY type, category
@@ -642,7 +743,7 @@ function getSummaryByMonth(month) {
 
 function getSummaryOverall() {
   const rows = db.prepare(`
-    SELECT type, category, SUM(amount) as total
+    SELECT type, category, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE 1=1 ${VISIBLE_FILTER}
     GROUP BY type, category
@@ -661,7 +762,7 @@ function getSummaryOverall() {
 
 function getSummaryByYear(year) {
   const rows = db.prepare(`
-    SELECT type, category, SUM(amount) as total
+    SELECT type, category, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY type, category
@@ -680,7 +781,7 @@ function getSummaryByYear(year) {
 
 function getDailyTotals(month) {
   return db.prepare(`
-    SELECT date, type, SUM(amount) as total
+    SELECT date, type, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE strftime('%Y-%m', date) = ? ${VISIBLE_FILTER}
     GROUP BY date, type
@@ -690,7 +791,7 @@ function getDailyTotals(month) {
 
 function getMonthlyTrends(months = 6) {
   return db.prepare(`
-    SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
+    SELECT strftime('%Y-%m', date) as month, type, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE date >= date(?, '-' || ? || ' months') ${VISIBLE_FILTER}
     GROUP BY month, type
@@ -765,12 +866,12 @@ function getBudgets() {
 function getBudgetsWithSpend(month) {
   return db.prepare(`
     SELECT b.id, b.category, b.monthly_limit,
-           COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) as spent
+           COALESCE(SUM(CASE WHEN t.type = 'expense' THEN ${COUNTED_AMOUNT_T} ELSE 0 END), 0) as spent
     FROM budgets b
     LEFT JOIN transactions t
       ON t.category = b.category
       AND strftime('%Y-%m', t.date) = ?
-      AND COALESCE(t.status, 'posted') = 'posted'
+      AND COALESCE(t.status, 'posted') IN ${COUNTED_STATES}
     GROUP BY b.id
     ORDER BY b.category ASC
   `).all(month);
@@ -803,10 +904,10 @@ function checkBudgetAlert(category, month) {
   if (!budget || !budget.monthly_limit) return null;
 
   const { spent } = db.prepare(`
-    SELECT COALESCE(SUM(amount), 0) as spent
+    SELECT COALESCE(SUM(${COUNTED_AMOUNT}), 0) as spent
     FROM transactions
     WHERE category = ? AND type = 'expense' AND strftime('%Y-%m', date) = ?
-      AND COALESCE(status, 'posted') = 'posted'
+      AND COALESCE(status, 'posted') IN ${COUNTED_STATES}
   `).get(category, month);
 
   const pct = spent / budget.monthly_limit;
@@ -837,7 +938,7 @@ function checkBudgetAlert(category, month) {
 
 function getYearlyOverview(year) {
   const monthlyRows = db.prepare(`
-    SELECT strftime('%Y-%m', date) as month, type, SUM(amount) as total
+    SELECT strftime('%Y-%m', date) as month, type, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY month, type
@@ -845,7 +946,7 @@ function getYearlyOverview(year) {
   `).all(year);
 
   const categoryRows = db.prepare(`
-    SELECT strftime('%Y-%m', date) as month, type, category, SUM(amount) as total
+    SELECT strftime('%Y-%m', date) as month, type, category, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE strftime('%Y', date) = ? ${VISIBLE_FILTER}
     GROUP BY month, type, category
@@ -902,7 +1003,7 @@ function getYearlyOverview(year) {
 
 function getCategoryTrends(category, months = 6) {
   return db.prepare(`
-    SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
+    SELECT strftime('%Y-%m', date) as month, SUM(${COUNTED_AMOUNT}) as total
     FROM transactions
     WHERE category = ? AND date >= date(?, '-' || ? || ' months') ${VISIBLE_FILTER}
     GROUP BY month
@@ -944,11 +1045,11 @@ function deleteSavingsGoal(id) {
 // ─── Portfolio / Investment tracking ──────────────────────────────────────────
 
 function getPortfolioSummary() {
-  const SENTINEL = "AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%') AND COALESCE(status, 'posted') = 'posted'";
+  const SENTINEL = `AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%') AND COALESCE(status, 'posted') IN ${COUNTED_STATES}`;
 
   // Money put INTO investments (type = 'investment')
   const investRows = db.prepare(`
-    SELECT category, SUM(amount) as total, COUNT(*) as cnt
+    SELECT category, SUM(${COUNTED_AMOUNT}) as total, COUNT(*) as cnt
     FROM transactions
     WHERE type = 'investment' ${SENTINEL}
     GROUP BY category
@@ -957,12 +1058,12 @@ function getPortfolioSummary() {
 
   // Money returned FROM investments (income where category.is_return = 1)
   const returnRows = db.prepare(`
-    SELECT t.category, SUM(t.amount) as total, COUNT(*) as cnt
+    SELECT t.category, SUM(${COUNTED_AMOUNT_T}) as total, COUNT(*) as cnt
     FROM transactions t
     INNER JOIN categories c ON c.name = t.category AND c.is_return = 1
     WHERE t.type = 'income'
       AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
-      AND COALESCE(t.status, 'posted') = 'posted'
+      AND COALESCE(t.status, 'posted') IN ${COUNTED_STATES}
     GROUP BY t.category
     ORDER BY total DESC
   `).all();
@@ -978,7 +1079,7 @@ function getPortfolioSummary() {
       OR (t.type = 'income' AND c.is_return = 1)
     )
     AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
-    AND COALESCE(t.status, 'posted') = 'posted'
+    AND COALESCE(t.status, 'posted') IN ${COUNTED_STATES}
     ORDER BY t.date DESC, t.created_at DESC
     LIMIT 50
   `).all();
@@ -986,13 +1087,13 @@ function getPortfolioSummary() {
   // Monthly breakdown for chart (last 24 months)
   const monthlyRows = db.prepare(`
     SELECT strftime('%Y-%m', t.date) as month,
-           SUM(CASE WHEN t.type = 'investment' THEN t.amount ELSE 0 END) as invested,
-           SUM(CASE WHEN t.type = 'income' AND c.is_return = 1 THEN t.amount ELSE 0 END) as returned
+           SUM(CASE WHEN t.type = 'investment' THEN ${COUNTED_AMOUNT_T} ELSE 0 END) as invested,
+           SUM(CASE WHEN t.type = 'income' AND c.is_return = 1 THEN ${COUNTED_AMOUNT_T} ELSE 0 END) as returned
     FROM transactions t
     LEFT JOIN categories c ON c.name = t.category
     WHERE (t.type = 'investment' OR (t.type = 'income' AND c.is_return = 1))
       AND (t.raw_message IS NULL OR t.raw_message NOT LIKE '__budget_alert_%')
-      AND COALESCE(t.status, 'posted') = 'posted'
+      AND COALESCE(t.status, 'posted') IN ${COUNTED_STATES}
       AND t.date >= date(?, '-24 months')
     GROUP BY month
     ORDER BY month ASC
@@ -1187,32 +1288,20 @@ function rememberReference(transactionId, reference) {
 }
 
 function insertSmsReversal({
-  sms_raw_id, dedupe_key, status, transaction_id = null, set_reversed = false,
+  sms_raw_id, dedupe_key, status, transaction_id = null,
   candidate_ids = null, bank = null, merchant = null, amount = null,
   account_masked = null, reference = null, occurred_at = null, raw_text, parser_match = null,
+  kind = null, paired_with = null,
 }) {
-  const insert = db.prepare(`
-    INSERT INTO sms_reversals (
-      sms_raw_id, dedupe_key, status, transaction_id, candidate_ids,
-      bank, merchant, amount, account_masked, reference, occurred_at,
-      raw_text, parser_match, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const markReversed = db.prepare(
-    `UPDATE transactions SET status = 'reversed' WHERE id = ? AND status = 'posted'`
-  );
-
   return db.transaction(() => {
-    if (set_reversed) {
-      const updated = markReversed.run(transaction_id);
-      if (updated.changes !== 1) {
-        const err = new Error('debit_not_posted');
-        err.code = 'DEBIT_NOT_POSTED';
-        throw err;
-      }
-    }
     if (transaction_id) rememberReference(transaction_id, reference);
-    const info = insert.run(
+    const info = db.prepare(`
+      INSERT INTO sms_reversals (
+        sms_raw_id, dedupe_key, status, transaction_id, candidate_ids,
+        bank, merchant, amount, account_masked, reference, occurred_at,
+        raw_text, parser_match, created_at, kind, paired_with
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
       sms_raw_id,
       dedupe_key,
       status,
@@ -1227,6 +1316,8 @@ function insertSmsReversal({
       raw_text,
       parser_match,
       new Date().toISOString(),
+      kind,
+      paired_with,
     );
     return db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(info.lastInsertRowid);
   })();
@@ -1246,35 +1337,6 @@ function listSmsReversalsForTransaction(transactionId) {
   return db.prepare(
     'SELECT * FROM sms_reversals WHERE transaction_id = ? ORDER BY id ASC'
   ).all(transactionId);
-}
-
-function resolveSmsReview(reviewId, transactionId) {
-  return db.transaction(() => {
-    const review = db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(reviewId);
-    if (!review) return { error: 'not_found' };
-    if (review.status !== 'needs_review') return { error: 'not_open', review };
-    let ids = [];
-    try { ids = JSON.parse(review.candidate_ids || '[]'); } catch { ids = []; }
-    if (!ids.includes(transactionId)) return { error: 'not_candidate', review };
-    const tx = db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId);
-    if (!tx || tx.source !== 'sms') return { error: 'not_candidate', review };
-    if (tx.status === 'posted') {
-      const updated = db.prepare(
-        `UPDATE transactions SET status = 'reversed' WHERE id = ? AND status = 'posted'`
-      ).run(transactionId);
-      if (updated.changes !== 1) return { error: 'not_posted', review };
-    } else if (tx.status !== 'reversed') {
-      return { error: 'not_posted', review };
-    }
-    rememberReference(transactionId, review.reference);
-    db.prepare(
-      `UPDATE sms_reversals SET status = 'linked', transaction_id = ? WHERE id = ?`
-    ).run(transactionId, reviewId);
-    return {
-      review: db.prepare('SELECT * FROM sms_reversals WHERE id = ?').get(reviewId),
-      transaction: db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId),
-    };
-  })();
 }
 
 function closeDb() {
@@ -1399,6 +1461,11 @@ function rememberOwnAccount(accountMasked, bank = 'hnb') {
     INSERT INTO own_accounts (account_masked, bank, first_seen_at) VALUES (?, ?, ?)
     ON CONFLICT(account_masked) DO NOTHING
   `).run(key, bank || 'hnb', new Date().toISOString());
+  // Any account that texts this phone is yours; nickname/purpose stay open questions.
+  db.prepare(`
+    INSERT INTO accounts (account_masked, bank, own, first_seen_at) VALUES (?, ?, 1, ?)
+    ON CONFLICT(account_masked) DO NOTHING
+  `).run(key, bank || 'hnb', new Date().toISOString());
   return db.prepare('SELECT * FROM own_accounts WHERE account_masked = ?').get(key);
 }
 
@@ -1494,10 +1561,10 @@ module.exports = {
   findSmsReversalByDedupeKey,
   findSmsDebitCandidates,
   insertSmsReversal,
+  rememberReference,
   listOpenSmsReviews,
   getSmsReversal,
   listSmsReversalsForTransaction,
-  resolveSmsReview,
   closeDb,
   matchCategoryRule,
   resolveCategory,

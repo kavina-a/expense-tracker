@@ -86,7 +86,7 @@ describe('HNB parser kinds', () => {
   it('bill_payment', () => {
     const p = parseSms(SAMPLES.bill_payment);
     assert.equal(p.kind, 'bill_payment');
-    assert.equal(p.merchant, 'DIALOG BILL PAYMENT');
+    assert.equal(p.merchant, 'DIALOG');
   });
 
   it('salary_credit knows its month', () => {

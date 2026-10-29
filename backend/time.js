@@ -49,6 +49,25 @@ function daysAgoColombo(days) {
   return colomboDate(new Date(now().getTime() - days * 24 * 60 * 60 * 1000));
 }
 
+const dateTimeFormat = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: TIME_ZONE,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hourCycle: 'h23',
+});
+
+// YYYY-MM-DDTHH:MM:SS in Colombo, with no offset (the form bank SMS times use).
+function colomboDateTime(at = now()) {
+  return dateTimeFormat.format(at instanceof Date ? at : new Date(at)).replace(' ', 'T');
+}
+
+// The instant a Colombo wall-clock string (YYYY-MM-DDTHH:MM[:SS]) refers to.
+function fromColombo(naive) {
+  const text = String(naive);
+  const full = text.length === 16 ? `${text}:00` : text.slice(0, 19);
+  return new Date(`${full}+05:30`);
+}
+
 function isoNow() {
   return now().toISOString();
 }
@@ -59,6 +78,8 @@ module.exports = {
   setClock,
   resetClock,
   colomboDate,
+  colomboDateTime,
+  fromColombo,
   todayColombo,
   monthColombo,
   yearColombo,
