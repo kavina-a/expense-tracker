@@ -2,6 +2,7 @@ const db = require('../db');
 const { log, logError } = require('../logger');
 const { completeJsonChat, extractJSON } = require('../parser');
 const { matchMerchantMapping } = require('../ledger/mappings');
+const { isAggregatorMerchant } = require('./aggregators');
 
 const PENDING_CATEGORY = 'pending_category';
 
@@ -48,6 +49,10 @@ async function guessMerchantCategory({ merchant, categories }) {
 }
 
 async function resolveSmsCategory(merchant, guessCategory, extra = {}) {
+  if (isAggregatorMerchant(merchant)) {
+    return { category: PENDING_CATEGORY, via: 'aggregator' };
+  }
+
   const mapped = matchMerchantMapping(merchant, extra.description || extra.merchant_raw || '');
   if (mapped) return { category: mapped.category, via: 'mapping' };
 

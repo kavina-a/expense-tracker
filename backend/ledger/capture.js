@@ -9,6 +9,8 @@ const { isoNow } = require('../time');
 const { recordEvent } = require('./states');
 const { ask } = require('../notify');
 const mappings = require('./mappings');
+const { isAggregatorMerchant } = require('../sms/aggregators');
+const notifyHub = require('../notify');
 
 const PENDING_CATEGORY = 'pending_category';
 
@@ -19,6 +21,7 @@ const ACTION_TYPES = [
   'capture_income',
   'capture_batch',
   'correct_transaction',
+  'resolve_aggregator',
 ];
 const CAPTURE_TYPES = ['expense', 'income'];
 const CORRECTION_TYPES = ['expense', 'income', 'investment', 'transfer'];
@@ -612,6 +615,93 @@ function correctTransaction(payload = {}) {
   };
 }
 
+function parseAggregatorPayment(value) {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (raw === 'pay_now' || raw === 'paynow') return 'pay_now';
+  if (raw === 'instalments' || raw === 'installments' || raw === 'instalment' || raw === 'installment') {
+    return 'instalments';
+  }
+  throw httpError(400, 'payment must be pay_now or instalments');
+}
+
+function resolveAggregator(payload = {}) {
+  const id = parseInt(payload.transaction_id, 10);
+  if (!Number.isFinite(id) || id <= 0) throw httpError(400, 'transaction_id is required');
+  const row = dbApi.getTransactionById(id);
+  if (!row) throw httpError(404, 'Not found');
+  if (!isAggregatorMerchant(row.merchant)) {
+    throw httpError(400, 'transaction is not an aggregator payment');
+  }
+
+  const store = payload.store != null ? String(payload.store).trim() : '';
+  const payment = parseAggregatorPayment(payload.payment);
+  let categoryName = null;
+  if (payload.category != null && String(payload.category).trim()) {
+    const resolved = resolveCategoryName(String(payload.category).trim(), { createIfAbsent: false });
+    if (resolved.missing) {
+      throw httpError(400, `Unknown category "${payload.category}". Create it with ensure_category first.`);
+    }
+    categoryName = resolved.category.name;
+  }
+  if (!store && !payment && !categoryName) {
+    throw httpError(400, 'set store, payment, or category for this charge only');
+  }
+
+  const fields = {};
+  if (store) fields.description = store;
+  if (payment) {
+    const label = payment === 'pay_now' ? 'Pay Now' : 'Instalments';
+    fields.note = label;
+    if (!row.note_source) fields.note_source = 'ledger';
+  }
+  if (categoryName) fields.category = categoryName;
+  if (store) fields.needs_review = 0;
+
+  const before = financialSnapshot(row);
+  if (payload.dry_run) {
+    return {
+      ok: true,
+      action: 'resolved_aggregator',
+      dry_run: true,
+      transaction_id: row.id,
+      transaction: publicTransaction(row),
+      taught_mapping: false,
+      before_image: before,
+      set: fields,
+    };
+  }
+
+  const cols = Object.keys(fields);
+  if (cols.length) {
+    db.prepare(`UPDATE transactions SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
+      .run(...cols.map((c) => fields[c]), row.id);
+  }
+  const updated = dbApi.getTransactionById(row.id);
+  const answer = [store, payment === 'pay_now' ? 'Pay Now' : payment === 'instalments' ? 'Instalments' : null, categoryName]
+    .filter(Boolean)
+    .join(' · ');
+  notifyHub.resolveQuestionsForSubject('txn', row.id, {
+    resolution: 'answered',
+    answerText: answer,
+    resolvedBy: 'ledger',
+  });
+  notifyHub.resolveEscalationByKey(`aggregator:${row.id}`, 'ledger');
+  recordEvent(row.id, {
+    actor: 'ledger',
+    reason: 'aggregator_resolved',
+    data: { store: store || null, payment, category: categoryName, taught_mapping: false },
+  });
+  return {
+    ok: true,
+    action: 'resolved_aggregator',
+    transaction_id: updated.id,
+    transaction: publicTransaction(updated),
+    taught_mapping: false,
+    before_image: before,
+  };
+}
+
 function ensureCategoryAction(payload = {}) {
   const name = String(payload.name || '').trim();
   if (!name) throw httpError(400, 'name is required');
@@ -645,6 +735,9 @@ function upsertMappingAction(payload = {}) {
   const categoryName = String(payload.category || '').trim();
   if (!payload.merchant_pattern || !categoryName) {
     throw httpError(400, 'merchant_pattern and category are required');
+  }
+  if (isAggregatorMerchant(payload.merchant_pattern)) {
+    throw httpError(400, 'Mintpay is a payment method, not a shop; do not map it to a category');
   }
   const resolved = resolveCategoryName(categoryName, { createIfAbsent: false });
   if (resolved.missing) {
@@ -779,6 +872,7 @@ function runTypedAction(type, payload) {
   if (type === 'capture_income') return captureIncome(payload);
   if (type === 'capture_batch') return captureBatch(payload);
   if (type === 'correct_transaction') return correctTransaction(payload);
+  if (type === 'resolve_aggregator') return resolveAggregator(payload);
   throw httpError(400, `Unknown action type: ${type}`);
 }
 
@@ -924,6 +1018,7 @@ module.exports = {
   captureIncome,
   captureBatch,
   correctTransaction,
+  resolveAggregator,
   ensureCategoryAction,
   upsertMappingAction,
   dispatchAction,

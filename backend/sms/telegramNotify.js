@@ -3,6 +3,7 @@ const tg = require('../telegram');
 const { log } = require('../logger');
 const { PENDING_CATEGORY } = require('./categorize');
 const notify = require('../notify');
+const { isAggregatorMerchant, aggregatorPrompt } = require('./aggregators');
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -20,6 +21,13 @@ function sender(deps) {
 }
 
 function expenseMessage(tx) {
+  if (isAggregatorMerchant(tx.merchant)) {
+    return [
+      `<b>${escapeHtml(tx.merchant || 'Mintpay')}</b> is a payment method, not the shop.`,
+      `LKR ${Number(tx.amount).toFixed(2)}`,
+      'Reply with the shop this was for. Pay Now or instalments?',
+    ].join('\n');
+  }
   const lines = [
     `<b>${escapeHtml(tx.merchant || 'Purchase')}</b>`,
     `LKR ${Number(tx.amount).toFixed(2)}`,
@@ -34,6 +42,17 @@ function expenseMessage(tx) {
 }
 
 function keyboardFor(tx, categories) {
+  if (isAggregatorMerchant(tx.merchant)) {
+    return {
+      inline_keyboard: [
+        [
+          { text: 'Pay Now', callback_data: `s:a:${tx.id}:pay_now` },
+          { text: 'Instalments', callback_data: `s:a:${tx.id}:instalments` },
+        ],
+        [{ text: 'Ignore', callback_data: `s:i:${tx.id}` }],
+      ],
+    };
+  }
   const rows = [];
   if (tx.category === PENDING_CATEGORY) {
     for (let i = 0; i < categories.length; i += 2) {
@@ -71,8 +90,6 @@ function muteKeyboard(txId) {
   };
 }
 
-// NOTIFY_CHANNEL=ledger: the same prompt Telegram would have sent becomes a
-// question Ledger reads over the API. Idempotent per transaction.
 function askLedgerAboutExpense(tx) {
   const pending = tx.category === PENDING_CATEGORY;
   const who = tx.merchant || 'Purchase';
@@ -91,10 +108,57 @@ function askLedgerAboutExpense(tx) {
   return { notified: false, reason: 'ledger_question', question_id: question.id };
 }
 
+async function askAboutAggregator(tx) {
+  const { question } = notify.ask({
+    subject: 'txn',
+    subjectId: tx.id,
+    prompt: aggregatorPrompt(tx),
+    options: { kind: 'aggregator', choices: ['Pay Now', 'Instalments'] },
+    priority: 3,
+    dedupeKey: `txn:${tx.id}:aggregator`,
+  });
+  await notify.escalate({
+    type: 'aggregator_unplanned',
+    severity: 'medium',
+    evidence: {
+      summary: aggregatorPrompt(tx),
+      transaction_id: tx.id,
+      merchant: tx.merchant,
+      amount: tx.amount,
+      date: tx.date,
+    },
+    dedupeKey: `aggregator:${tx.id}`,
+  });
+  return question;
+}
+
+async function notifyAggregator(tx, deps = {}) {
+  const question = await askAboutAggregator(tx);
+  if (notify.channel() === 'ledger') {
+    return { notified: false, reason: 'ledger_question', question_id: question.id };
+  }
+  if (tx.telegram_notify_message_id) return { notified: false, reason: 'already_sent', question_id: question.id };
+
+  const chatId = chatIdFrom(deps);
+  if (!chatId) return { notified: false, reason: 'no_chat', question_id: question.id };
+
+  const sent = await sender(deps)(chatId, expenseMessage(tx), {
+    reply_markup: keyboardFor(tx, []),
+  });
+  const messageId = sent?.message_id ?? null;
+  if (!messageId) {
+    log('warn', 'SmsNotify', 'send_failed', { transaction_id: tx.id, merchant: tx.merchant });
+    return { notified: false, reason: 'send_failed', question_id: question.id };
+  }
+  db.updateSmsExpense(tx.id, { telegram_notify_message_id: messageId });
+  return { notified: true, message_id: messageId, reason: 'sent', question_id: question.id };
+}
+
 async function notifySmsExpense(transaction, deps = {}) {
   const tx = db.getTransactionById(transaction.id) || transaction;
   if (!tx || tx.source !== 'sms') return { notified: false, reason: 'not_sms' };
   if (db.isMerchantMuted(tx.merchant)) return { notified: false, reason: 'muted' };
+  if (isAggregatorMerchant(tx.merchant)) return notifyAggregator(tx, deps);
   if (notify.channel() === 'ledger') return askLedgerAboutExpense(tx);
   if (tx.telegram_notify_message_id) return { notified: false, reason: 'already_sent' };
 
@@ -163,7 +227,9 @@ function applyCategory(tx, category) {
     category,
     category_reply_pending: 0,
   });
-  if (tx.merchant) db.upsertCategoryRule(tx.merchant, category);
+  if (tx.merchant && !isAggregatorMerchant(tx.merchant)) {
+    db.upsertCategoryRule(tx.merchant, category);
+  }
   return db.getTransactionById(tx.id);
 }
 
@@ -214,6 +280,15 @@ async function handleSmsCallback(query, deps = {}) {
     }
     if (chatId) await send(chatId, 'Only this one was ignored.');
     return { handled: true, action: 'ignore_once', transaction: tx };
+  }
+
+  if (kind === 'a') {
+    const label = extra === 'instalments' ? 'Instalments' : extra === 'pay_now' ? 'Pay Now' : null;
+    if (!label || !isAggregatorMerchant(tx.merchant)) return { handled: true, action: 'ignored' };
+    const updated = db.updateSmsExpense(tx.id, { note: label, note_source: tx.note_source || 'ledger' });
+    await clearKeyboard(query, deps);
+    if (chatId) await send(chatId, `${escapeHtml(tx.merchant)} marked ${label}. Reply with the shop.`);
+    return { handled: true, action: 'aggregator_payment', transaction: updated };
   }
 
   if (kind === 'n') {
@@ -369,6 +444,12 @@ async function handleSmsTextReply(message, deps = {}) {
     const updated = applyCategory(tx, text);
     if (chatId) await send(chatId, `${escapeHtml(tx.merchant)} → ${escapeHtml(text)}`);
     return { handled: true, action: 'category_text', transaction: updated };
+  }
+
+  if (isAggregatorMerchant(tx.merchant)) {
+    const updated = db.updateSmsExpense(tx.id, { description: text, needs_review: 0 });
+    if (chatId) await send(chatId, `Shop saved on this ${escapeHtml(tx.merchant)} charge only.`);
+    return { handled: true, action: 'aggregator_store', transaction: updated };
   }
 
   const updated = db.updateSmsExpense(tx.id, { note: text });

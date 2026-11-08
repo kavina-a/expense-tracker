@@ -253,7 +253,7 @@ describe('Ledger v1 HTTP', () => {
     ]) {
       assert.ok(spec.paths[path], path);
     }
-    assert.equal(spec.info.version, '1.2.0');
+    assert.equal(spec.info.version, '1.3.0');
     assert.ok(spec.paths['/agent/actions'].post);
     assert.ok(spec.paths['/agent/actions'].get);
   });
@@ -386,6 +386,7 @@ describe('Ledger v1 HTTP', () => {
     assert.equal(spec.openapi, '3.1.0');
     assert.ok(spec.components.schemas.CaptureItem);
     assert.ok(spec.components.schemas.CorrectTransactionPayload);
+    assert.ok(spec.components.schemas.ResolveAggregatorPayload);
     assert.ok(spec.components.schemas.CaptureBatchPayload);
     assert.ok(spec.components.schemas.AgentActionRequest);
     assert.deepEqual(spec.paths['/agent/actions'].post.requestBody.content['application/json'].schema, {
@@ -394,6 +395,7 @@ describe('Ledger v1 HTTP', () => {
     const types = spec.components.schemas.AgentActionRequest.properties.type.enum;
     assert.ok(types.includes('capture_income'));
     assert.ok(types.includes('correct_transaction'));
+    assert.ok(types.includes('resolve_aggregator'));
     assert.ok(spec.paths['/transactions/{id}']);
   });
 });

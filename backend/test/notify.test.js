@@ -6,7 +6,7 @@ const db = require('../db');
 const notify = require('../notify');
 const { ingestSmsText } = require('../sms/ingest');
 const { notifySmsExpense } = require('../sms/telegramNotify');
-const { purchaseUber, purchaseMintpay } = require('../sms/samples');
+const { purchaseUber } = require('../sms/samples');
 
 after(() => db.closeDb());
 
@@ -35,7 +35,7 @@ describe('NOTIFY_CHANNEL', () => {
 describe('ledger channel: SMS expenses become questions', () => {
   it('asks for a category when none is known, and never touches Telegram', async () => {
     const result = await ingestSmsText({
-      text: purchaseMintpay,
+      text: 'SMS ALERT:INTERNET, Account:1111***2299,Location:WIDGET MART, LK,Amount(Approx.):12.00 LKR,Av.Bal:1000.00 LKR,Date:08.11.26,Time:10:00, Hot Line:0112462462',
       guessCategory: null,
       chatId: '42',
       sendMessage: neverSend,
@@ -46,7 +46,7 @@ describe('ledger channel: SMS expenses become questions', () => {
 
     const [question] = questionsFor(result.transaction_id);
     assert.ok(question, 'a question was written');
-    assert.match(question.prompt, /What category is MINTPAY/);
+    assert.match(question.prompt, /What category is WIDGET MART/);
     assert.equal(question.priority, 2);
     assert.equal(question.resolution, null);
     const options = JSON.parse(question.options);

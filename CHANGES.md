@@ -2,6 +2,22 @@
 
 Plain-English notes on each phase of the autonomy work.
 
+## Mintpay is a payment method, not a shop
+
+**Before this:** a Mintpay bank SMS was treated like any merchant. A leftover `category_rules` row, a Ledger mapping, a Groq guess, or one Telegram category tap could stamp **every** later Mintpay charge with the same category (for example Out w Friends), even though Mintpay is only the way the card was charged.
+
+**What changed**
+
+- Mintpay (`MINTPAY`, `MINTPAY PVT LTD`) is an **aggregator**. SMS ingest skips mappings, `category_rules`, and the model. The expense is still posted (`pending_category`, `needs_review`) so totals keep the amount; it does not disappear.
+- Ledger is asked via the existing questions + `aggregator_unplanned` escalation (webhook when configured). The prompt asks for the **underlying shop** and **Pay Now vs instalments**, with those two choices only — no category grid.
+- One answer applies to **that charge only**. `resolve_aggregator` (`POST /api/v1/agent/actions`) sets store / payment / optional category on that row and does not write `merchant_mappings` or `category_rules`. Telegram category taps and `upsertCategoryRule` are blocked for Mintpay the same way.
+- `upsert_mapping` for Mintpay is rejected. Duplicate SMS reuse the same question (`dedupe_key`). Ordinary merchants (Uber rules, Groq for unknown shops) are unchanged.
+- Existing mis-labelled Mintpay rows are **not** bulk-edited.
+
+**Not in this change:** instalment-plan auto-link (`bnpl_plans` is not implemented). No production writes.
+
+**Tests:** fictional Mintpay / Uber / Keells / cafe names only.
+
 ## Ledger income capture and corrections
 
 **Before this:** agent capture only booked **expenses** on an exact date+amount match. Nearby SMS amounts could not be corrected, income (salary/tutoring) had no capture type, OpenAPI treated `payload` as an untyped object, and Cloudflare mapped to Taggy if the description contained **either** DOMAIN or TAGGY.

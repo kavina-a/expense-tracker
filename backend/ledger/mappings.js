@@ -6,6 +6,7 @@
 
 const db = require('../db').connection;
 const { isoNow } = require('../time');
+const { isAggregatorMerchant } = require('../sms/aggregators');
 
 const DEFAULT_MAPPINGS = [
   {
@@ -100,6 +101,7 @@ function upsertMapping({ merchant_pattern, description_pattern = '', category, n
   const extra = normalizePattern(description_pattern);
   const name = String(category || '').trim();
   if (!merchant || !name) return null;
+  if (isAggregatorMerchant(merchant)) return null;
   db.prepare(`
     INSERT INTO merchant_mappings
       (merchant_pattern, description_pattern, category, approved_by, note, created_at)
@@ -119,6 +121,7 @@ function haystack(merchant, description) {
 }
 
 function matchMerchantMapping(merchant, description = '') {
+  if (isAggregatorMerchant(merchant)) return null;
   const hay = haystack(merchant, description);
   if (!hay.trim()) return null;
   for (const row of listMappings()) {

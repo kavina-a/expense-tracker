@@ -219,16 +219,20 @@ async function insertPurchase(parsed, raw, key, text, options = {}) {
   }
 
   const { tx, adopted } = created;
-  const label = tx.status === 'provisional'
+  if (resolved.via === 'aggregator') {
+    db.updateSmsExpense(tx.id, { needs_review: 1 });
+  }
+  const posted = db.getTransactionById(tx.id) || tx;
+  const label = posted.status === 'provisional'
     ? `Held ${parsed.merchant} ${money(parsed.amount)} LKR. It posts after the settle window unless it is reversed.`
-    : tx.status === 'voided'
+    : posted.status === 'voided'
       ? `Logged ${parsed.merchant} ${money(parsed.amount)} LKR, already reversed.`
-      : `Logged ${parsed.merchant || 'purchase'} ${money(parsed.amount)} LKR as ${tx.category}.`;
+      : `Logged ${parsed.merchant || 'purchase'} ${money(parsed.amount)} LKR as ${posted.category}.`;
   log('info', 'SmsIngest', 'inserted', {
-    sms_raw_id: raw.id, transaction_id: tx.id, merchant: parsed.merchant, amount: parsed.amount,
-    category: tx.category, status: tx.status, category_via: resolved.via,
+    sms_raw_id: raw.id, transaction_id: posted.id, merchant: parsed.merchant, amount: parsed.amount,
+    category: posted.category, status: posted.status, category_via: resolved.via,
   });
-  const result = await finishPurchase(raw, parsed, tx, options, 'inserted', label);
+  const result = await finishPurchase(raw, parsed, posted, options, 'inserted', label);
   result.category_via = resolved.via;
   if (adopted?.final) result.final_transaction_id = adopted.final.id;
   await notifyFinal(adopted?.final, options);
