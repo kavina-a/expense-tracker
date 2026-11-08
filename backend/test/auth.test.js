@@ -155,6 +155,13 @@ describe('API keys', () => {
     assert.equal((await call('/api/backup', { headers: bearer(key) })).status, 403);
     const del = await call('/api/transactions/1', { method: 'DELETE', headers: bearer(key) });
     assert.equal(del.status, 403);
+
+    const action = await call('/api/v1/agent/actions', {
+      method: 'POST',
+      headers: bearer(key),
+      body: { type: 'ensure_category', reason: 'auth coverage', payload: { name: 'Other' } },
+    });
+    assert.equal(action.status, 200);
   });
 
   it('limits an ingest key to the SMS routes', async () => {
@@ -223,6 +230,11 @@ describe('API keys', () => {
     const spec = await res.json();
     assert.equal(spec.openapi, '3.1.0');
     assert.ok(spec.paths['/agent/inbox']);
+    assert.ok(spec.paths['/transactions']);
+    assert.ok(spec.paths['/categories']);
+    assert.ok(spec.paths['/merchant-mappings']);
+    assert.ok(spec.paths['/agent/actions'].get);
+    assert.ok(spec.paths['/agent/actions'].post);
     assert.equal(spec.servers[0].url.endsWith('/api/v1'), true);
     const inbox = await call('/api/v1/agent/inbox', { headers: bearer(key) });
     assert.equal(inbox.status, 200);

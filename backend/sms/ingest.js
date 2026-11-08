@@ -196,7 +196,17 @@ async function insertPurchase(parsed, raw, key, text, options = {}) {
   }
 
   const guess = options.guessCategory === undefined ? guessMerchantCategory : options.guessCategory;
-  const resolved = await resolveSmsCategory(parsed.merchant, guess);
+  const resolved = await resolveSmsCategory(parsed.merchant, guess, {
+    description: parsed.merchant_raw || parsed.merchant,
+    merchant_raw: parsed.merchant_raw,
+  });
+  const linked = require('../ledger/capture').linkSmsToCapture({
+    parsed, raw, key, text, category: resolved.category,
+  });
+  if (linked) {
+    return finishPurchase(raw, parsed, linked, options, 'linked_capture',
+      `Linked SMS to existing ledger capture #${linked.id}. No new row.`);
+  }
   let created;
   try {
     created = engine.createDebit({ parsed, raw, key, text, category: resolved.category });
@@ -334,6 +344,34 @@ async function ingestSmsText({ text, receivedAt = null, guessCategory, notify, c
 
   const result = await route(parsed, raw, text, options);
   await settleSafely(options);
+  return syncResultAfterSettle(result, options);
+}
+
+// A hold that posts during settle() already ran its notify path there. Map the
+// ingest notify_reason to what callers expect for a posted row, without rewriting
+// the transaction snapshot finishPurchase returned (tests inspect that hold).
+function syncResultAfterSettle(result, options) {
+  if (!result?.transaction_id || result.notify_reason !== 'provisional_hold') return result;
+  const fresh = db.getTransactionById(result.transaction_id);
+  if (!fresh || fresh.status !== 'posted') return result;
+
+  if (options.notify === false) {
+    result.notify_reason = 'notify_disabled';
+    result.notified = false;
+    return result;
+  }
+  if (fresh.telegram_notify_message_id) {
+    result.notified = true;
+    result.notify_reason = 'sent';
+    return result;
+  }
+  if (notifyHub.channel() === 'ledger') {
+    result.notify_reason = 'ledger_question';
+    result.notified = false;
+    return result;
+  }
+  result.notify_reason = 'no_chat';
+  result.notified = false;
   return result;
 }
 

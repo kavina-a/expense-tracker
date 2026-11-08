@@ -10,7 +10,8 @@
     "key:create": "node scripts/key.js create",
     "key:list": "node scripts/key.js list",
     "key:revoke": "node scripts/key.js revoke",
-    "key:generate": "node scripts/key-generate.js"
+    "key:generate": "node scripts/key-generate.js",
+    "ledger:capture": "node scripts/ledger-capture.js"
   },
   "dependencies": {
     "axios": "^1.18.1",

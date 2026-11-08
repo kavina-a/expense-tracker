@@ -1,0 +1,60 @@
+{
+  "reason": "user-approved fictional capture example — do not use these amounts in production",
+  "currency": "LKR",
+  "timezone": "Asia/Colombo",
+  "idempotency_key": "example-northwind-2026-10",
+  "categories": [
+    { "name": "Northwind", "type": "expense" },
+    { "name": "Gizmo", "type": "expense" }
+  ],
+  "mappings": [
+    {
+      "merchant_pattern": "ACME CLOUD",
+      "description_pattern": "DOMAIN",
+      "category": "Northwind",
+      "note": "Acme Cloud domain for Northwind only; not every Acme Cloud charge"
+    },
+    {
+      "merchant_pattern": "WIDGET.AI",
+      "category": "Gizmo"
+    },
+    {
+      "merchant_pattern": "BRAINBOX",
+      "category": "AI Tools",
+      "note": "Brainbox payments use the existing AI Tools category"
+    }
+  ],
+  "items": [
+    {
+      "date": "2026-10-08",
+      "amount": 12.34,
+      "merchant": "ACME CLOUD",
+      "description": "Acme Cloud domain for Northwind",
+      "category": "Northwind",
+      "client_key": "example-acme-northwind-domain"
+    },
+    {
+      "date": "2026-10-28",
+      "amount": 56.78,
+      "merchant": "WIDGET.AI",
+      "description": "Widget.ai for Gizmo",
+      "category": "Gizmo",
+      "client_key": "example-widget-gizmo"
+    },
+    {
+      "date": "2026-10-07",
+      "amount": 90.00,
+      "merchant": "BRAINBOX",
+      "description": "Brainbox payment",
+      "category": "AI expenses",
+      "client_key": "example-brainbox-ai"
+    },
+    {
+      "date": "2026-10-27",
+      "amount": 1.23,
+      "merchant": "TUNES",
+      "description": "Tunes playback",
+      "client_key": "example-tunes-unspecified"
+    }
+  ]
+}

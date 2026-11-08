@@ -3,7 +3,7 @@
 // Callers are one of:
 //   - a browser with a session cookie        -> full access (single user)
 //   - an API key, scope full                  -> full access
-//   - an API key, scope agent                 -> read-only (Phase 4 adds the agent actions)
+//   - an API key, scope agent                 -> GET plus POST /api/v1/agent/actions
 //   - an API key, scope ingest                -> SMS ingest routes only
 //
 // The webhooks (/webhook, /telegram) are outside /api and keep their own secrets.
@@ -18,6 +18,8 @@ const PUBLIC_PATHS = new Set(['/auth/login', '/auth/logout']);
 const SELF_AUTH_PREFIXES = ['/sms-ingest', '/sms-review'];
 // Whole-database export: only a full-scope caller, never the agent.
 const FULL_ONLY_PATHS = new Set(['/backup', '/restore']);
+// Ledger writes stay on this one route. Dashboard POST /api/transactions etc. stay closed.
+const AGENT_WRITE_PATHS = new Set(['/v1/agent/actions']);
 
 function bearerToken(req) {
   const header = req.get('authorization') || '';
@@ -44,7 +46,8 @@ function scopeAllows(scope, method, apiPath) {
   if (scope === 'full') return true;
   if (scope === 'agent') {
     if (FULL_ONLY_PATHS.has(apiPath)) return false;
-    return method === 'GET' || method === 'HEAD';
+    if (method === 'GET' || method === 'HEAD') return true;
+    return method === 'POST' && AGENT_WRITE_PATHS.has(apiPath);
   }
   return false; // ingest keys only reach the SMS routes, which authenticate themselves
 }
@@ -124,4 +127,4 @@ function mountAuthRoutes(app) {
   });
 }
 
-module.exports = { apiAuth, mountAuthRoutes, authenticate, scopeAllows, bearerToken };
+module.exports = { apiAuth, mountAuthRoutes, authenticate, scopeAllows, bearerToken, AGENT_WRITE_PATHS };
