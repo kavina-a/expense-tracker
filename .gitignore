@@ -9,3 +9,7 @@ backend/backups/
 
 # Real bank SMS fixtures contain personal data; the repo is public.
 backend/sms/fixtures/
+
+# Reviewed Ledger capture payloads may contain personal amounts.
+backend/ledger/payloads/
+*.capture.json

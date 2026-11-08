@@ -43,6 +43,7 @@ Every response is JSON with `ok: true` and an `action`:
 | `inserted` | New expense. `category`, `transaction_id`, and `parsed` are set. |
 | `reversed` | One posted debit matched. That row is now `reversed`. No second expense or income row. |
 | `linked_existing` | The debit was already reversed (the other HNB message for the same refund). Linked only. |
+| `linked_capture` | A Ledger capture already booked this date+amount. The SMS was attached to that row; no second expense. |
 | `needs_review` | More than one posted debit matched. None were changed. `candidates` lists them. `review_id` is the reversal record. |
 | `orphan_reversal` | Reversal or credit confirmation with nothing to attach to. Logged, not booked as income. |
 | `unparsed` | No bank pattern matched. The raw text is in `sms_raw`. Nothing was added to the ledger. |
@@ -101,7 +102,7 @@ When nothing matches, the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODE
 - `ledger` (default): nothing is sent to Telegram. Each prompt becomes a row in the `questions` table (`subject = 'txn'`, `options = {"kind": "category" | "note" | "mute", "choices": [...]}`), and Ledger reads it from `GET /api/agent/inbox`. The result of the ingest call has `notify_reason: "ledger_question"`. A muted merchant still gets no prompt. One question per expense, even if the SMS is processed again.
 - `telegram`: the original flow described below, unchanged.
 
-**Heads-up:** Ledger can read these questions now but can't answer them through the API until a later phase. Until then, run production with `NOTIFY_CHANNEL=telegram` if you still want to answer from your phone.
+**Heads-up:** Ledger can read these questions and can record reviewed expenses / mappings through `POST /api/v1/agent/actions`. It still cannot tap inbox answers (category buttons, mute, notes) through the API; run production with `NOTIFY_CHANNEL=telegram` if you still want to answer those from your phone.
 
 ## Telegram notes
 

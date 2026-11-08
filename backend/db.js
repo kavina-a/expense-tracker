@@ -385,6 +385,39 @@ const MIGRATIONS = [
     columns: { unmatched: [['dedupe_key', 'TEXT']] },
     sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_unmatched_dedupe ON unmatched(dedupe_key);`,
   },
+  {
+    name: '005_ledger_capture',
+    // Additive: user-approved merchant mappings and a log of Ledger writes.
+    sql: `
+      CREATE TABLE IF NOT EXISTS merchant_mappings (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        merchant_pattern     TEXT    NOT NULL,
+        description_pattern  TEXT    NOT NULL DEFAULT '',
+        category             TEXT    NOT NULL,
+        approved_by          TEXT    NOT NULL DEFAULT 'user',
+        note                 TEXT,
+        created_at           TEXT    NOT NULL,
+        UNIQUE(merchant_pattern, description_pattern)
+      );
+      CREATE INDEX IF NOT EXISTS idx_merchant_mappings_pattern
+        ON merchant_mappings(merchant_pattern);
+
+      CREATE TABLE IF NOT EXISTS agent_actions (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_id           INTEGER,
+        actor            TEXT    NOT NULL,
+        type             TEXT    NOT NULL,
+        reason           TEXT,
+        idempotency_key  TEXT    UNIQUE,
+        request          TEXT,
+        result           TEXT,
+        before_image     TEXT,
+        status           TEXT    NOT NULL,
+        created_at       TEXT    NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_actions_created ON agent_actions(created_at, id);
+    `,
+  },
 ];
 
 function appliedMigrationNames() {
@@ -471,6 +504,8 @@ const DEFAULT_CATEGORIES = [
   { name: 'Uber to/from class',     icon: '🚌', color: '#404040', type: 'expense' },
   { name: 'Dates',                  icon: '💑', color: '#737373', type: 'expense' },
   { name: 'Drinking',               icon: '🍺', color: '#8A8A8A', type: 'expense' },
+  { name: 'Taggy',                  icon: '🏷️', color: '#404040', type: 'expense' },
+  { name: 'Modelsnapper',           icon: '📸', color: '#525252', type: 'expense' },
   // ── Investment ──────────────────────────────────────────────────────────────
   { name: 'Stocks',                 icon: '📊', color: '#8A6D3B', type: 'investment' },
   // ── Catch-all ────────────────────────────────────────────────────────────────
@@ -1590,3 +1625,6 @@ module.exports = {
   // stops growing. Older code keeps using the helpers above.
   connection: db,
 };
+
+// After exports so ledger/mappings can use connection without a circular init.
+require('./ledger/mappings').seedDefaultMappings();

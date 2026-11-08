@@ -1,6 +1,7 @@
 const db = require('../db');
 const { log, logError } = require('../logger');
 const { completeJsonChat, extractJSON } = require('../parser');
+const { matchMerchantMapping } = require('../ledger/mappings');
 
 const PENDING_CATEGORY = 'pending_category';
 
@@ -46,7 +47,10 @@ async function guessMerchantCategory({ merchant, categories }) {
   }
 }
 
-async function resolveSmsCategory(merchant, guessCategory) {
+async function resolveSmsCategory(merchant, guessCategory, extra = {}) {
+  const mapped = matchMerchantMapping(merchant, extra.description || extra.merchant_raw || '');
+  if (mapped) return { category: mapped.category, via: 'mapping' };
+
   const rule = db.matchCategoryRule(merchant);
   if (rule) return { category: rule, via: 'rule' };
 

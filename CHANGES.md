@@ -2,6 +2,22 @@
 
 Plain-English notes on each phase of the autonomy work.
 
+## Ledger capture (agent v1 writes)
+
+**Before this:** Ledger's documented API was `GET /openapi.json` and `GET /agent/inbox`. An agent key could not list a date range of transactions, create a category, save a merchant mapping, or record an expense annotation. Existing SMS rows could only be read through the undocumented dashboard `GET /api/transactions`.
+
+**What changed**
+
+- **v1 reads:** `GET /api/v1/transactions` (Colombo `from`/`to` or `month`), `GET /api/v1/categories`, `GET /api/v1/merchant-mappings`, `GET /api/v1/agent/actions`.
+- **v1 writes:** `POST /api/v1/agent/actions` with a required `reason`. Types: `ensure_category`, `upsert_mapping`, `capture_expense`, `capture_batch`. Agent keys cannot POST the dashboard routes or touch backup/restore/delete.
+- **Duplicate-safe capture:** match `expense` rows on date + amount. One hit is enriched (category/note/merchant filled in; amount, date and account are left alone). Several hits return `needs_review` and open an inbox question. No hit inserts `source=ledger` with `account_masked` null. A later matching bank SMS links onto that row instead of booking a second expense.
+- **Mappings are conservative:** Cloudflare only becomes Taggy when the description also contains DOMAIN or TAGGY. Fashn.ai → Modelsnapper. Claude → the existing **AI Tools** category (`AI expenses` is an alias, not a second category).
+- **CLI:** `npm run ledger:capture -- --file <json>` (`--dry-run` or `--local`, or `LEDGER_API_KEY` against `--base`). Personal amounts stay out of git; `backend/ledger/capture.example.json` uses fictional figures.
+
+**New tables (additive migration `005_ledger_capture`):** `merchant_mappings`, `agent_actions`. Existing rows are not rewritten.
+
+**Tests:** fictional merchants and amounts only (Acme Cloud / Northwind, Widget.ai / Gizmo, Brainbox, Tunes). No production call, no secrets.
+
 ## Phase 0 — Security and hygiene
 
 **Before this phase:** anyone who knew the Railway URL could read, change or delete every transaction, and download or overwrite a full backup. Only the SMS and Telegram routes were protected.

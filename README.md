@@ -39,8 +39,20 @@ Send a key as `Authorization: Bearer stk_…` (or `X-API-Key`). Other commands, 
 | Scope | Can do |
 |---|---|
 | `full` | Everything, including backup and restore |
-| `agent` | Read-only `GET`s, plus `GET /api/agent/inbox`. Cannot read the full backup. |
+| `agent` | All `GET`s except the full backup, plus `POST /api/v1/agent/actions` (categories, user-approved mappings, duplicate-safe capture). Cannot delete, restore, or use dashboard write routes. |
 | `ingest` | The SMS routes only |
+
+Ledger's contract is `GET /api/v1/openapi.json`. Besides the inbox it can search transactions by Colombo date range, list categories and merchant mappings, and POST typed actions (`ensure_category`, `upsert_mapping`, `capture_expense`, `capture_batch`). Each action needs a `reason`. Capture matches an existing expense by date + amount (to the cent); a unique hit is annotated, several hits return `needs_review`, and a miss inserts `source=ledger` with `account_masked` left empty rather than inventing cash/card. Replay the same `idempotency_key` to no-op. Reviewed JSON belongs in a gitignored file (see `backend/ledger/capture.example.json` for fictional shape):
+
+```bash
+# Inspect without writing:
+npm run ledger:capture -- --file ./october.capture.json --dry-run
+
+# Apply to a running API. The key stays in the environment, never in git:
+LEDGER_API_KEY=stk_... npm run ledger:capture -- --file ./october.capture.json --base https://kavina-expense-tracker.up.railway.app
+```
+
+User-approved mapping patterns (no amounts) ship with the app: Cloudflare domain/Taggy only, Fashn.ai → Modelsnapper, Claude → AI Tools. Transaction rows are never seeded.
 
 ### Where prompts go
 
