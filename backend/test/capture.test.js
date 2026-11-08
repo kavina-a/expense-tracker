@@ -38,6 +38,8 @@ function fictionalSms({ location, amount, date, time = '10:00' }) {
 describe('user-approved merchant mappings', () => {
   it('maps Cloudflare domain/Taggy, Fashn.ai and Claude, but not a plain Cloudflare charge', () => {
     assert.equal(mappings.matchMerchantMapping('CLOUDFLARE', 'Workers plan'), null);
+    assert.equal(mappings.matchMerchantMapping('CLOUDFLARE', 'Cloudflare domain renewal'), null);
+    assert.equal(mappings.matchMerchantMapping('CLOUDFLARE', 'Taggy hosting'), null);
     assert.equal(mappings.matchMerchantMapping('CLOUDFLARE', 'Cloudflare domain for Taggy').category, 'Taggy');
     assert.equal(mappings.matchMerchantMapping('FASHN.AI', '').category, 'Modelsnapper');
     assert.equal(mappings.matchMerchantMapping('CLAUDE', 'Claude payment').category, 'AI Tools');
@@ -244,12 +246,14 @@ describe('Ledger v1 HTTP', () => {
     for (const path of [
       '/agent/inbox',
       '/transactions',
+      '/transactions/{id}',
       '/categories',
       '/merchant-mappings',
       '/agent/actions',
     ]) {
       assert.ok(spec.paths[path], path);
     }
+    assert.equal(spec.info.version, '1.2.0');
     assert.ok(spec.paths['/agent/actions'].post);
     assert.ok(spec.paths['/agent/actions'].get);
   });
@@ -375,4 +379,248 @@ describe('Ledger v1 HTTP', () => {
     });
     assert.equal(second.replayed, true);
   });
+
+  it('documents typed payload schemas and the new action types', async () => {
+    const { key } = createKey({ name: 'capture-schemas', scope: 'agent' });
+    const spec = await (await call('/api/v1/openapi.json', { headers: bearer(key) })).json();
+    assert.equal(spec.openapi, '3.1.0');
+    assert.ok(spec.components.schemas.CaptureItem);
+    assert.ok(spec.components.schemas.CorrectTransactionPayload);
+    assert.ok(spec.components.schemas.CaptureBatchPayload);
+    assert.ok(spec.components.schemas.AgentActionRequest);
+    assert.deepEqual(spec.paths['/agent/actions'].post.requestBody.content['application/json'].schema, {
+      $ref: '#/components/schemas/AgentActionRequest',
+    });
+    const types = spec.components.schemas.AgentActionRequest.properties.type.enum;
+    assert.ok(types.includes('capture_income'));
+    assert.ok(types.includes('correct_transaction'));
+    assert.ok(spec.paths['/transactions/{id}']);
+  });
 });
+
+describe('income capture and corrections', () => {
+  it('inserts income when nothing matches and leaves account unassigned', () => {
+    const result = capture.captureIncome({
+      date: '2026-10-22',
+      amount: 95.75,
+      merchant: 'NORTHWIND PAYROLL',
+      description: 'Northwind October payroll',
+      category: 'Arimac',
+      client_key: 'test-oct-income-arimac',
+    });
+    assert.equal(result.action, 'inserted');
+    assert.equal(result.transaction.type, 'income');
+    assert.equal(result.transaction.category, 'Arimac');
+    assert.equal(result.transaction.account_assigned, false);
+    assert.equal(result.transaction.occurred_at, null);
+    assert.equal(result.transaction.source, 'ledger');
+  });
+
+  it('does not treat an expense of the same date and amount as income', () => {
+    const expense = capture.captureExpense({
+      date: '2026-10-21',
+      amount: 44.00,
+      merchant: 'NORTHWIND PAYROLL',
+      category: 'Other',
+      client_key: 'typed-expense-same-day',
+    });
+    const income = capture.captureIncome({
+      date: '2026-10-21',
+      amount: 44.00,
+      merchant: 'NORTHWIND PAYROLL',
+      category: 'Arimac',
+      client_key: 'typed-income-same-day',
+    });
+    assert.equal(expense.action, 'inserted');
+    assert.equal(expense.transaction.type, 'expense');
+    assert.equal(income.action, 'inserted');
+    assert.equal(income.transaction.type, 'income');
+    assert.notEqual(income.transaction_id, expense.transaction_id);
+  });
+
+  it('dry_run previews income without writing or consuming idempotency_key', () => {
+    const preview = capture.dispatchAction({
+      type: 'capture_income',
+      reason: 'preview fictional October income',
+      dry_run: true,
+      idempotency_key: 'dry-run-income-key',
+      payload: {
+        date: '2026-10-16',
+        amount: 12.50,
+        merchant: 'NORTHWIND PAYROLL',
+        category: 'Arimac',
+        client_key: 'dry-run-income',
+      },
+    });
+    assert.equal(preview.dry_run, true);
+    assert.equal(preview.result.action, 'inserted');
+    assert.equal(preview.result.transaction_id, null);
+    assert.equal(
+      capture.listActions().some((row) => row.idempotency_key === 'dry-run-income-key'),
+      false,
+    );
+
+    const applied = capture.dispatchAction({
+      type: 'capture_income',
+      reason: 'apply fictional October income',
+      idempotency_key: 'dry-run-income-key',
+      payload: {
+        date: '2026-10-16',
+        amount: 12.50,
+        merchant: 'NORTHWIND PAYROLL',
+        category: 'Arimac',
+        client_key: 'dry-run-income',
+      },
+      auth: { kind: 'key', scope: 'agent', key: { id: 0 } },
+    });
+    assert.equal(applied.replayed, false);
+    assert.equal(applied.result.action, 'inserted');
+    assert.equal(applied.result.transaction.type, 'income');
+  });
+
+  it('does not treat a nearby amount on the same day as the same expense', async () => {
+    const sms = await ingestSmsText({
+      text: fictionalSms({ location: 'WIDGET.AI', amount: '25.92', date: '2026-10-28' }),
+      guessCategory: null,
+    });
+    assert.equal(sms.action, 'inserted');
+    const result = capture.captureExpense({
+      date: '2026-10-28',
+      amount: 26.99,
+      merchant: 'WIDGET.AI',
+      description: 'Widget.ai for Gizmo',
+      category: 'Gizmo',
+      client_key: 'test-no-fuzzy-widget',
+    });
+    assert.equal(result.action, 'inserted');
+    assert.notEqual(result.transaction_id, sms.transaction_id);
+  });
+
+  it('corrects an identified row by id with expected originals and keeps SMS evidence', async () => {
+    const sms = await ingestSmsText({
+      text: fictionalSms({ location: 'ACME CLOUD', amount: '10.00', date: '2026-10-09' }),
+      guessCategory: null,
+    });
+    const id = sms.transaction_id;
+    const rawBefore = db.connection.prepare('SELECT raw_message, source FROM transactions WHERE id = ?').get(id);
+    assert.ok(rawBefore.raw_message);
+
+    const preview = capture.correctTransaction({
+      transaction_id: id,
+      expected: { date: '2026-10-09', amount: 10.00, type: 'expense' },
+      set: { date: '2026-10-08', amount: 10.34, category: 'Northwind' },
+      dry_run: true,
+    });
+    assert.equal(preview.dry_run, true);
+    assert.equal(preview.action, 'corrected');
+    const still = db.getTransactionById(id);
+    assert.equal(still.date, '2026-10-09');
+    assert.equal(still.amount, 10);
+
+    const applied = capture.correctTransaction({
+      transaction_id: id,
+      expected: { date: '2026-10-09', amount: 10.00, type: 'expense' },
+      set: { date: '2026-10-08', amount: 10.34, category: 'Northwind' },
+    });
+    assert.equal(applied.action, 'corrected');
+    assert.equal(applied.transaction.date, '2026-10-08');
+    assert.equal(applied.transaction.amount, 10.34);
+    assert.equal(applied.transaction.category, 'Northwind');
+    assert.equal(applied.before_image.amount, 10);
+    assert.equal(applied.before_image.date, '2026-10-09');
+    const after = db.connection.prepare('SELECT raw_message, source, occurred_at FROM transactions WHERE id = ?').get(id);
+    assert.equal(after.raw_message, rawBefore.raw_message);
+    assert.equal(after.source, 'sms');
+    const count = db.connection.prepare(
+      "SELECT COUNT(*) AS n FROM transactions WHERE merchant = 'ACME CLOUD' AND date IN ('2026-10-08','2026-10-09') AND ROUND(amount * 100) IN (1000, 1034)"
+    ).get().n;
+    assert.equal(count, 1);
+  });
+
+  it('rejects a correction when expected originals do not match', async () => {
+    const sms = await ingestSmsText({
+      text: fictionalSms({ location: 'TUNES', amount: '3.75', date: '2026-10-27' }),
+      guessCategory: null,
+    });
+    assert.throws(
+      () => capture.correctTransaction({
+        transaction_id: sms.transaction_id,
+        expected: { date: '2026-10-27', amount: 3.90, type: 'expense' },
+        set: { amount: 3.90 },
+      }),
+      (err) => err.status === 409 && err.code === 'conflict',
+    );
+    const row = db.getTransactionById(sms.transaction_id);
+    assert.equal(row.amount, 3.75);
+  });
+
+  it('lets an agent key correct through actions and get a transaction by id', async () => {
+    const { key } = createKey({ name: 'capture-correct', scope: 'agent' });
+    const income = await call('/api/v1/agent/actions', {
+      method: 'POST',
+      headers: bearer(key),
+      body: {
+        type: 'capture_income',
+        reason: 'user-approved fictional October income',
+        idempotency_key: 'http-test-income',
+        payload: {
+          date: '2026-10-15',
+          amount: 67.25,
+          merchant: 'GIZMO TUTORING',
+          description: 'Gizmo tutoring',
+          category: 'Tutopiya',
+          client_key: 'http-test-income',
+        },
+      },
+    });
+    assert.equal(income.status, 200);
+    const created = await income.json();
+    assert.equal(created.result.action, 'inserted');
+    assert.equal(created.result.transaction.type, 'income');
+    assert.equal(created.result.transaction.category, 'Tutopiya');
+
+    const got = await call(`/api/v1/transactions/${created.result.transaction_id}`, { headers: bearer(key) });
+    assert.equal(got.status, 200);
+    const body = await got.json();
+    assert.equal(body.transaction.category, 'Tutopiya');
+    assert.equal(body.transaction.raw_message, undefined);
+
+    const dry = await call('/api/v1/agent/actions', {
+      method: 'POST',
+      headers: bearer(key),
+      body: {
+        type: 'correct_transaction',
+        reason: 'preview fictional amount fix',
+        dry_run: true,
+        payload: {
+          transaction_id: created.result.transaction_id,
+          expected: { date: '2026-10-15', amount: 67.25, type: 'income' },
+          set: { amount: 67.50 },
+        },
+      },
+    });
+    assert.equal(dry.status, 200);
+    const preview = await dry.json();
+    assert.equal(preview.dry_run, true);
+    assert.equal(db.getTransactionById(created.result.transaction_id).amount, 67.25);
+
+    const conflict = await call('/api/v1/agent/actions', {
+      method: 'POST',
+      headers: bearer(key),
+      body: {
+        type: 'correct_transaction',
+        reason: 'stale expected originals',
+        payload: {
+          transaction_id: created.result.transaction_id,
+          expected: { date: '2026-10-15', amount: 1, type: 'income' },
+          set: { amount: 67.50 },
+        },
+      },
+    });
+    assert.equal(conflict.status, 409);
+    const denied = await conflict.json();
+    assert.equal(denied.code, 'conflict');
+    assert.ok(denied.current);
+  });
+});
+

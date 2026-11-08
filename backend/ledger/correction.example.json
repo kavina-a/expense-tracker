@@ -1,0 +1,13 @@
+{
+  "reason": "user-approved fictional correction — replace transaction_id after GET /api/v1/transactions",
+  "currency": "LKR",
+  "timezone": "Asia/Colombo",
+  "corrections": [
+    {
+      "transaction_id": 9001,
+      "expected": { "date": "2026-10-09", "amount": 10.00, "type": "expense", "category": "Other" },
+      "set": { "date": "2026-10-08", "amount": 10.34, "category": "Northwind" }
+    }
+  ],
+  "items": []
+}

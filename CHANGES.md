@@ -2,6 +2,23 @@
 
 Plain-English notes on each phase of the autonomy work.
 
+## Ledger income capture and corrections
+
+**Before this:** agent capture only booked **expenses** on an exact date+amount match. Nearby SMS amounts could not be corrected, income (salary/tutoring) had no capture type, OpenAPI treated `payload` as an untyped object, and Cloudflare mapped to Taggy if the description contained **either** DOMAIN or TAGGY.
+
+**What changed**
+
+- **`capture_income`** (and `type: "income"` on batch items) using the same exact date+amount rule against income rows. Known income categories already in the app (Arimac, Tutopiya, …) work; new names go through `ensure_category` with `type: "income"`.
+- **`correct_transaction`**: `{ transaction_id, expected: { date, amount, type?, category? }, set: { date, amount, type, category, … } }`. Optimistic concurrency: if the row no longer matches `expected`, the API returns `409` with the current public snapshot. SMS `raw_message`, source, account, and `occurred_at` stay put. Original date/amount/type/category are written to `transaction_events`.
+- **`dry_run`**: on the action or payload; previews and does not consume `idempotency_key`.
+- **OpenAPI 1.2.0** typed schemas: `CaptureItem`, `CorrectTransactionPayload`, `CaptureBatchPayload`, `AgentActionRequest`. `GET /api/v1/transactions/{id}` for expected originals (still no raw SMS).
+- **No fuzzy match:** capture never picks a nearby amount or date. Merchant, when sent, is a constraint. Identified mismatches must go through `correct_transaction`.
+- **Cloudflare mapping** now requires **both** DOMAIN and TAGGY (`DOMAIN+TAGGY`). A Cloudflare domain charge that is not for Taggy stays unmatched. Migration `006_cloudflare_domain_taggy` removes the old DOMAIN-or-TAGGY alternatives (mapping rows only).
+
+**Out of scope here:** rows outside October 2026. This increment does not reclassify or import later months.
+
+**Tests:** fictional October figures only.
+
 ## Ledger capture (agent v1 writes)
 
 **Before this:** Ledger's documented API was `GET /openapi.json` and `GET /agent/inbox`. An agent key could not list a date range of transactions, create a category, save a merchant mapping, or record an expense annotation. Existing SMS rows could only be read through the undocumented dashboard `GET /api/transactions`.
@@ -11,7 +28,7 @@ Plain-English notes on each phase of the autonomy work.
 - **v1 reads:** `GET /api/v1/transactions` (Colombo `from`/`to` or `month`), `GET /api/v1/categories`, `GET /api/v1/merchant-mappings`, `GET /api/v1/agent/actions`.
 - **v1 writes:** `POST /api/v1/agent/actions` with a required `reason`. Types: `ensure_category`, `upsert_mapping`, `capture_expense`, `capture_batch`. Agent keys cannot POST the dashboard routes or touch backup/restore/delete.
 - **Duplicate-safe capture:** match `expense` rows on date + amount. One hit is enriched (category/note/merchant filled in; amount, date and account are left alone). Several hits return `needs_review` and open an inbox question. No hit inserts `source=ledger` with `account_masked` null. A later matching bank SMS links onto that row instead of booking a second expense.
-- **Mappings are conservative:** Cloudflare only becomes Taggy when the description also contains DOMAIN or TAGGY. Fashn.ai → Modelsnapper. Claude → the existing **AI Tools** category (`AI expenses` is an alias, not a second category).
+- **Mappings are conservative:** Cloudflare only becomes Taggy when the description contains **both** DOMAIN and TAGGY. Fashn.ai → Modelsnapper. Claude → the existing **AI Tools** category (`AI expenses` is an alias, not a second category).
 - **CLI:** `npm run ledger:capture -- --file <json>` (`--dry-run` or `--local`, or `LEDGER_API_KEY` against `--base`). Personal amounts stay out of git; `backend/ledger/capture.example.json` uses fictional figures.
 
 **New tables (additive migration `005_ledger_capture`):** `merchant_mappings`, `agent_actions`. Existing rows are not rewritten.

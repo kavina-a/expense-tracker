@@ -1,8 +1,8 @@
 {
-  "reason": "user-approved fictional capture example — do not use these amounts in production",
+  "reason": "user-approved fictional October capture and corrections — do not use these amounts in production",
   "currency": "LKR",
   "timezone": "Asia/Colombo",
-  "idempotency_key": "example-northwind-2026-10",
+  "idempotency_key": "example-northwind-2026-10-v2",
   "categories": [
     { "name": "Northwind", "type": "expense" },
     { "name": "Gizmo", "type": "expense" }
@@ -10,9 +10,9 @@
   "mappings": [
     {
       "merchant_pattern": "ACME CLOUD",
-      "description_pattern": "DOMAIN",
+      "description_pattern": "DOMAIN+NORTHWIND",
       "category": "Northwind",
-      "note": "Acme Cloud domain for Northwind only; not every Acme Cloud charge"
+      "note": "Acme Cloud domain for Northwind only; both DOMAIN and NORTHWIND must appear"
     },
     {
       "merchant_pattern": "WIDGET.AI",
@@ -24,37 +24,43 @@
       "note": "Brainbox payments use the existing AI Tools category"
     }
   ],
+  "corrections": [],
   "items": [
     {
       "date": "2026-10-08",
       "amount": 12.34,
+      "type": "expense",
       "merchant": "ACME CLOUD",
       "description": "Acme Cloud domain for Northwind",
       "category": "Northwind",
       "client_key": "example-acme-northwind-domain"
     },
     {
-      "date": "2026-10-28",
-      "amount": 56.78,
-      "merchant": "WIDGET.AI",
-      "description": "Widget.ai for Gizmo",
-      "category": "Gizmo",
-      "client_key": "example-widget-gizmo"
+      "date": "2026-10-23",
+      "amount": 95.00,
+      "type": "income",
+      "merchant": "NORTHWIND PAYROLL",
+      "description": "Northwind October payroll",
+      "category": "Arimac",
+      "client_key": "example-northwind-payroll"
+    },
+    {
+      "date": "2026-10-14",
+      "amount": 66.00,
+      "type": "income",
+      "merchant": "GIZMO TUTORING",
+      "description": "Gizmo tutoring",
+      "category": "Tutopiya",
+      "client_key": "example-gizmo-tutoring"
     },
     {
       "date": "2026-10-07",
       "amount": 90.00,
+      "type": "expense",
       "merchant": "BRAINBOX",
       "description": "Brainbox payment",
       "category": "AI expenses",
       "client_key": "example-brainbox-ai"
-    },
-    {
-      "date": "2026-10-27",
-      "amount": 1.23,
-      "merchant": "TUNES",
-      "description": "Tunes playback",
-      "client_key": "example-tunes-unspecified"
     }
   ]
 }

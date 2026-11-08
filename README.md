@@ -39,10 +39,10 @@ Send a key as `Authorization: Bearer stk_…` (or `X-API-Key`). Other commands, 
 | Scope | Can do |
 |---|---|
 | `full` | Everything, including backup and restore |
-| `agent` | All `GET`s except the full backup, plus `POST /api/v1/agent/actions` (categories, user-approved mappings, duplicate-safe capture). Cannot delete, restore, or use dashboard write routes. |
+| `agent` | All `GET`s except the full backup, plus `POST /api/v1/agent/actions` (categories, mappings, expense/income capture, ID corrections). Cannot delete, restore, or use dashboard write routes. |
 | `ingest` | The SMS routes only |
 
-Ledger's contract is `GET /api/v1/openapi.json`. Besides the inbox it can search transactions by Colombo date range, list categories and merchant mappings, and POST typed actions (`ensure_category`, `upsert_mapping`, `capture_expense`, `capture_batch`). Each action needs a `reason`. Capture matches an existing expense by date + amount (to the cent); a unique hit is annotated, several hits return `needs_review`, and a miss inserts `source=ledger` with `account_masked` left empty rather than inventing cash/card. Replay the same `idempotency_key` to no-op. Reviewed JSON belongs in a gitignored file (see `backend/ledger/capture.example.json` for fictional shape):
+Ledger's contract is `GET /api/v1/openapi.json` (payload schemas under `components.schemas`). Besides the inbox it can search transactions by Colombo date range, fetch one row by id, list categories and merchant mappings, and POST typed actions: `ensure_category`, `upsert_mapping`, `capture_expense`, `capture_income`, `capture_batch`, `correct_transaction`. Each action needs a `reason`. Capture matches the **same type** by exact date + amount (to the cent) — nearby amounts or dates are never chosen. A unique hit is annotated; several hits return `needs_review`; a miss inserts `source=ledger` with `account_masked` left empty. `correct_transaction` updates one existing row by id when `expected.date` and `expected.amount` still match; otherwise `409`. It does not rewrite SMS text, source, or account, and it does not invent fees. `dry_run: true` previews without writing. Replay the same `idempotency_key` to no-op. Reviewed JSON belongs in a gitignored file (see `backend/ledger/capture.example.json` and `correction.example.json` for fictional shape). Run corrections in a batch *before* capture items so an updated row can then exact-match instead of inserting a duplicate.
 
 ```bash
 # Inspect without writing:
@@ -52,7 +52,7 @@ npm run ledger:capture -- --file ./october.capture.json --dry-run
 LEDGER_API_KEY=stk_... npm run ledger:capture -- --file ./october.capture.json --base https://kavina-expense-tracker.up.railway.app
 ```
 
-User-approved mapping patterns (no amounts) ship with the app: Cloudflare domain/Taggy only, Fashn.ai → Modelsnapper, Claude → AI Tools. Transaction rows are never seeded.
+User-approved mapping patterns (no amounts) ship with the app: Cloudflare domain for Taggy only (`DOMAIN+TAGGY`; a Cloudflare domain charge without TAGGY stays unmatched), Fashn.ai → Modelsnapper, Claude → AI Tools. Transaction rows are never seeded.
 
 ### Where prompts go
 

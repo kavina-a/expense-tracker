@@ -12,7 +12,16 @@ const mappings = require('./mappings');
 
 const PENDING_CATEGORY = 'pending_category';
 
-const ACTION_TYPES = ['ensure_category', 'upsert_mapping', 'capture_expense', 'capture_batch'];
+const ACTION_TYPES = [
+  'ensure_category',
+  'upsert_mapping',
+  'capture_expense',
+  'capture_income',
+  'capture_batch',
+  'correct_transaction',
+];
+const CAPTURE_TYPES = ['expense', 'income'];
+const CORRECTION_TYPES = ['expense', 'income', 'investment', 'transfer'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const UNSET_CATEGORIES = new Set(['', PENDING_CATEGORY, 'uncategorized']);
 const CATEGORY_ALIASES = new Map([
@@ -172,15 +181,15 @@ function hayIncludes(row, needle) {
   return hay.includes(needle);
 }
 
-function loadDateAmountCandidates(date, amount) {
+function loadDateAmountCandidates(date, amount, type = 'expense') {
   return db.prepare(`
     SELECT * FROM transactions
-    WHERE type = 'expense'
+    WHERE type = ?
       AND date = ?
       AND COALESCE(status, 'posted') NOT IN ('reversed', 'voided')
       AND (raw_message IS NULL OR raw_message NOT LIKE '__budget_alert_%')
     ORDER BY id ASC
-  `).all(date).filter((row) => sameAmount(row.amount, amount));
+  `).all(type, date).filter((row) => sameAmount(row.amount, amount));
 }
 
 function merchantTokenMatches(row, merchant) {
@@ -189,12 +198,12 @@ function merchantTokenMatches(row, merchant) {
   return hayIncludes(row, needle);
 }
 
-function findCaptureCandidates({ date, amount, merchant }) {
-  const rows = loadDateAmountCandidates(date, amount);
+function findCaptureCandidates({ date, amount, merchant, type = 'expense' }) {
+  const rows = loadDateAmountCandidates(date, amount, type);
   if (!merchant) return rows;
-  const withMerchant = rows.filter((row) => merchantTokenMatches(row, merchant));
-  if (withMerchant.length) return withMerchant;
-  return rows;
+  // Merchant is a constraint, not a hint: do not fall back to other merchants
+  // on the same date+amount (that would silently fuzzy-match plausible rows).
+  return rows.filter((row) => merchantTokenMatches(row, merchant));
 }
 
 function captureDedupeKey(item) {
@@ -202,6 +211,7 @@ function captureDedupeKey(item) {
   return [
     'ledger',
     'capture',
+    item.type || 'expense',
     item.date,
     cents(item.amount),
     String(item.merchant || '').trim().toUpperCase(),
@@ -211,15 +221,33 @@ function captureDedupeKey(item) {
 
 function snapshot(row) {
   if (!row) return null;
+  return financialSnapshot(row);
+}
+
+function financialSnapshot(row) {
+  if (!row) return null;
   return {
     id: row.id,
+    date: row.date,
+    amount: row.amount,
+    type: row.type,
     category: row.category,
     description: row.description,
     merchant: row.merchant,
     note: row.note,
     account_masked: row.account_masked,
     source: row.source,
+    status: row.status,
+    needs_review: row.needs_review ? 1 : 0,
   };
+}
+
+function getPublicById(id) {
+  const n = parseInt(id, 10);
+  if (!Number.isFinite(n) || n <= 0) throw httpError(400, 'Invalid id');
+  const row = dbApi.getTransactionById(n);
+  if (!row) throw httpError(404, 'Not found');
+  return { ok: true, transaction: publicTransaction(row) };
 }
 
 function applyAnnotation(row, item, { categoryName, overwriteCategory }) {
@@ -267,14 +295,17 @@ function insertCapture(item, { categoryName }) {
   const note = item.note ? String(item.note).trim() : null;
   const category = categoryName || PENDING_CATEGORY;
   const account = item.account_masked ? String(item.account_masked).trim() : null;
+  const type = item.type || 'expense';
+  const direction = type === 'income' ? 'credit' : 'debit';
   const info = db.prepare(`
     INSERT INTO transactions (
       amount, type, category, description, date, created_at, source, status,
       merchant, merchant_raw, account_masked, occurred_at, note, note_source,
       direction, needs_review, dedupe_key
-    ) VALUES (?, 'expense', ?, ?, ?, ?, 'ledger', 'posted', ?, ?, ?, NULL, ?, ?, 'debit', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'ledger', 'posted', ?, ?, ?, NULL, ?, ?, ?, ?, ?)
   `).run(
     item.amount,
+    type,
     category,
     description,
     item.date,
@@ -284,6 +315,7 @@ function insertCapture(item, { categoryName }) {
     account || null,
     note,
     note ? 'ledger' : null,
+    direction,
     category === PENDING_CATEGORY ? 1 : 0,
     captureDedupeKey(item),
   );
@@ -308,11 +340,25 @@ function insertCapture(item, { categoryName }) {
   return row;
 }
 
+function captureIncome(rawItem = {}) {
+  return captureEntry({ ...rawItem, type: 'income' });
+}
+
 function captureExpense(rawItem = {}) {
+  return captureEntry({ ...rawItem, type: 'expense' });
+}
+
+function captureEntry(rawItem = {}) {
   requireCurrency(rawItem.currency);
+  const type = String(rawItem.type || 'expense').trim().toLowerCase();
+  if (!CAPTURE_TYPES.includes(type)) {
+    throw httpError(400, 'type must be expense or income');
+  }
+  const dryRun = Boolean(rawItem.dry_run);
   const item = {
     date: requireDate(rawItem.date),
     amount: requireAmount(rawItem.amount),
+    type,
     merchant: rawItem.merchant ? String(rawItem.merchant).trim() : '',
     description: rawItem.description ? String(rawItem.description).trim() : '',
     note: rawItem.note ? String(rawItem.note).trim() : '',
@@ -350,21 +396,25 @@ function captureExpense(rawItem = {}) {
     date: item.date,
     amount: item.amount,
     merchant: item.merchant,
+    type: item.type,
   });
 
   if (candidates.length > 1) {
     const views = candidates.map(candidateView);
-    ask({
-      subject: 'txn',
-      subjectId: candidates[0].id,
-      prompt: `Ambiguous match for ${item.merchant || item.description || 'expense'} LKR ${item.amount.toFixed(2)} on ${item.date}: ${candidates.length} candidates`,
-      options: { kind: 'capture_review', choices: views.map((row) => row.id) },
-      priority: 2,
-      dedupeKey: `capture-review|${item.date}|${cents(item.amount)}|${item.merchant.toUpperCase()}`,
-    });
+    if (!dryRun) {
+      ask({
+        subject: 'txn',
+        subjectId: candidates[0].id,
+        prompt: `Ambiguous match for ${item.merchant || item.description || item.type} LKR ${item.amount.toFixed(2)} on ${item.date}: ${candidates.length} candidates`,
+        options: { kind: 'capture_review', choices: views.map((row) => row.id) },
+        priority: 2,
+        dedupeKey: `capture-review|${item.type}|${item.date}|${cents(item.amount)}|${item.merchant.toUpperCase()}`,
+      });
+    }
     return {
       ok: true,
       action: 'needs_review',
+      dry_run: dryRun,
       transaction_id: null,
       transaction: null,
       candidates: views,
@@ -373,6 +423,18 @@ function captureExpense(rawItem = {}) {
   }
 
   if (candidates.length === 1) {
+    if (dryRun) {
+      return {
+        ok: true,
+        action: 'enriched',
+        dry_run: true,
+        transaction_id: candidates[0].id,
+        transaction: publicTransaction(candidates[0]),
+        candidates: [candidateView(candidates[0])],
+        before_image: financialSnapshot(candidates[0]),
+        changes: {},
+      };
+    }
     const overwriteCategory = Boolean(categoryName);
     const { row, before, changes } = applyAnnotation(candidates[0], item, { categoryName, overwriteCategory });
     return {
@@ -386,6 +448,25 @@ function captureExpense(rawItem = {}) {
     };
   }
 
+  if (dryRun) {
+    return {
+      ok: true,
+      action: 'inserted',
+      dry_run: true,
+      transaction_id: null,
+      transaction: null,
+      candidates: [],
+      changes: {},
+      preview: {
+        date: item.date,
+        amount: item.amount,
+        type: item.type,
+        category: categoryName || PENDING_CATEGORY,
+        account_assigned: Boolean(item.account_masked),
+      },
+    };
+  }
+
   const inserted = insertCapture(item, { categoryName });
   return {
     ok: true,
@@ -394,6 +475,140 @@ function captureExpense(rawItem = {}) {
     transaction: publicTransaction(inserted),
     candidates: [],
     changes: {},
+  };
+}
+
+function expectedMatches(row, expected = {}) {
+  const mismatches = [];
+  if (expected.date != null && String(expected.date) !== String(row.date)) {
+    mismatches.push('date');
+  }
+  if (expected.amount != null && !sameAmount(expected.amount, row.amount)) {
+    mismatches.push('amount');
+  }
+  if (expected.type != null && String(expected.type) !== String(row.type)) {
+    mismatches.push('type');
+  }
+  if (expected.category != null && String(expected.category) !== String(row.category)) {
+    mismatches.push('category');
+  }
+  return mismatches;
+}
+
+function correctTransaction(payload = {}) {
+  const id = parseInt(payload.transaction_id, 10);
+  if (!Number.isFinite(id) || id <= 0) throw httpError(400, 'transaction_id is required');
+  const expected = payload.expected;
+  const patch = payload.set || payload.patch;
+  if (!expected || typeof expected !== 'object') {
+    throw httpError(400, 'expected originals (date and amount at minimum) are required');
+  }
+  if (expected.date == null || expected.amount == null) {
+    throw httpError(400, 'expected.date and expected.amount are required');
+  }
+  requireDate(expected.date, 'expected.date');
+  requireAmount(expected.amount);
+  if (!patch || typeof patch !== 'object' || !Object.keys(patch).length) {
+    throw httpError(400, 'set must include at least one field to change');
+  }
+
+  const row = dbApi.getTransactionById(id);
+  if (!row) throw httpError(404, 'Not found');
+
+  const mismatches = expectedMatches(row, expected);
+  if (mismatches.length) {
+    throw httpError(409, 'Transaction has changed; refresh expected originals', {
+      code: 'conflict',
+      current: publicTransaction(row),
+      expected,
+      mismatches,
+    });
+  }
+
+  const fields = {};
+  if (patch.date != null) fields.date = requireDate(patch.date, 'set.date');
+  if (patch.amount != null) fields.amount = requireAmount(patch.amount);
+  if (patch.type != null) {
+    const nextType = String(patch.type).trim().toLowerCase();
+    if (!CORRECTION_TYPES.includes(nextType)) {
+      throw httpError(400, 'set.type must be expense, income, investment, or transfer');
+    }
+    fields.type = nextType;
+    if (nextType === 'income') fields.direction = 'credit';
+    if (nextType === 'expense') fields.direction = 'debit';
+  }
+  if (patch.category != null) {
+    const resolved = resolveCategoryName(String(patch.category).trim(), { createIfAbsent: false });
+    if (resolved.missing) {
+      throw httpError(400, `Unknown category "${patch.category}". Create it with ensure_category first.`);
+    }
+    fields.category = resolved.category.name;
+  }
+  if (patch.description != null) fields.description = String(patch.description).trim() || null;
+  if (patch.note != null) {
+    fields.note = String(patch.note).trim() || null;
+    if (fields.note && !row.note_source) fields.note_source = 'ledger';
+  }
+  if (patch.merchant != null) fields.merchant = String(patch.merchant).trim().toUpperCase() || null;
+
+  const before = financialSnapshot(row);
+  const changes = {};
+  for (const [col, value] of Object.entries(fields)) {
+    if (col === 'amount') {
+      if (!sameAmount(row[col], value)) changes[col] = { from: row[col], to: value };
+    } else if (row[col] !== value) {
+      changes[col] = { from: row[col], to: value };
+    }
+  }
+  fields.needs_review = 0;
+
+  if (payload.dry_run) {
+    return {
+      ok: true,
+      action: 'corrected',
+      dry_run: true,
+      transaction_id: row.id,
+      transaction: publicTransaction(row),
+      before_image: before,
+      changes,
+    };
+  }
+
+  if (!Object.keys(changes).length) {
+    return {
+      ok: true,
+      action: 'unchanged',
+      transaction_id: row.id,
+      transaction: publicTransaction(row),
+      before_image: before,
+      changes: {},
+    };
+  }
+
+  const cols = Object.keys(fields);
+  db.prepare(`UPDATE transactions SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
+    .run(...cols.map((c) => fields[c]), row.id);
+  const updated = dbApi.getTransactionById(row.id);
+  recordEvent(row.id, {
+    actor: 'ledger',
+    reason: 'ledger_correction',
+    data: {
+      original: {
+        date: before.date,
+        amount: before.amount,
+        type: before.type,
+        category: before.category,
+      },
+      changes,
+    },
+  });
+  return {
+    ok: true,
+    action: 'corrected',
+    transaction_id: updated.id,
+    transaction: publicTransaction(updated),
+    before_image: before,
+    changes,
   };
 }
 
@@ -447,19 +662,54 @@ function upsertMappingAction(payload = {}) {
 
 function captureBatch(payload = {}) {
   requireCurrency(payload.currency);
+  const dryRun = Boolean(payload.dry_run);
   const categories = [];
   for (const spec of payload.categories || []) {
-    categories.push(ensureCategoryAction(spec));
+    if (dryRun) {
+      categories.push({ ok: true, action: 'preview', name: spec.name, type: spec.type || 'expense' });
+    } else {
+      categories.push(ensureCategoryAction(spec));
+    }
   }
   const mappingResults = [];
   for (const spec of payload.mappings || []) {
-    mappingResults.push(upsertMappingAction(spec));
+    if (dryRun) {
+      mappingResults.push({
+        ok: true,
+        action: 'preview',
+        merchant_pattern: spec.merchant_pattern,
+        description_pattern: spec.description_pattern || '',
+        category: spec.category,
+      });
+    } else {
+      mappingResults.push(upsertMappingAction(spec));
+    }
+  }
+  // Corrections first so later exact captures can enrich the corrected row
+  // instead of inserting a duplicate.
+  const corrections = [];
+  for (const spec of payload.corrections || []) {
+    corrections.push(correctTransaction({ ...spec, dry_run: dryRun || spec.dry_run }));
   }
   const items = [];
   for (const spec of payload.items || []) {
-    items.push(captureExpense({ ...spec, currency: spec.currency || payload.currency }));
+    const kind = spec.type === 'income' ? 'income' : 'expense';
+    items.push(captureEntry({
+      ...spec,
+      type: kind,
+      currency: spec.currency || payload.currency,
+      dry_run: dryRun || spec.dry_run,
+    }));
   }
-  return { ok: true, action: 'batch', categories, mappings: mappingResults, items };
+  return {
+    ok: true,
+    action: 'batch',
+    dry_run: dryRun,
+    categories,
+    mappings: mappingResults,
+    corrections,
+    items,
+  };
 }
 
 function defaultIdempotencyKey(type, payload) {
@@ -526,13 +776,28 @@ function runTypedAction(type, payload) {
   if (type === 'ensure_category') return ensureCategoryAction(payload);
   if (type === 'upsert_mapping') return upsertMappingAction(payload);
   if (type === 'capture_expense') return captureExpense(payload);
+  if (type === 'capture_income') return captureIncome(payload);
   if (type === 'capture_batch') return captureBatch(payload);
+  if (type === 'correct_transaction') return correctTransaction(payload);
   throw httpError(400, `Unknown action type: ${type}`);
 }
 
-function dispatchAction({ type, reason, payload = {}, idempotency_key, auth } = {}) {
+function dispatchAction({ type, reason, payload = {}, idempotency_key, auth, dry_run } = {}) {
   if (!ACTION_TYPES.includes(type)) throw httpError(400, `Unknown action type: ${type}`);
   const why = requireReason(reason);
+  const dry = Boolean(dry_run || payload.dry_run);
+  const workingPayload = dry ? { ...payload, dry_run: true } : payload;
+  if (dry) {
+    const result = runTypedAction(type, workingPayload);
+    return {
+      ok: true,
+      dry_run: true,
+      replayed: false,
+      type,
+      status: 'dry_run',
+      result,
+    };
+  }
   const key = String(idempotency_key || payload.idempotency_key || defaultIdempotencyKey(type, payload));
   const existing = getActionByKey(key);
   if (existing) {
@@ -610,10 +875,12 @@ function dispatchAction({ type, reason, payload = {}, idempotency_key, auth } = 
 function linkSmsToCapture({ parsed, raw, key, text, category }) {
   const date = String(parsed.occurred_at || '').slice(0, 10);
   if (!DATE_RE.test(date) || parsed.amount == null) return null;
+  const type = parsed.direction === 'credit' ? 'income' : 'expense';
   const candidates = findCaptureCandidates({
     date,
     amount: parsed.amount,
     merchant: parsed.merchant,
+    type,
   }).filter((row) => row.source === 'ledger');
   if (candidates.length !== 1) return null;
 
@@ -650,10 +917,13 @@ module.exports = {
   ACTION_TYPES,
   CATEGORY_ALIASES,
   publicTransaction,
+  getPublicById,
   searchTransactions,
   findCaptureCandidates,
   captureExpense,
+  captureIncome,
   captureBatch,
+  correctTransaction,
   ensureCategoryAction,
   upsertMappingAction,
   dispatchAction,

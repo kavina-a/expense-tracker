@@ -28,7 +28,7 @@ function usage(message) {
   node scripts/ledger-capture.js --file <payload.json> --local
   LEDGER_API_KEY=stk_... node scripts/ledger-capture.js --file <payload.json> --base <origin>
 
-Payload shape: { reason, currency, categories[], mappings[], items[] }.
+Payload shape: { reason, currency, dry_run, categories[], mappings[], corrections[], items[] }.
 See ledger/capture.example.json (fictional amounts only).`);
   process.exit(message ? 1 : 0);
 }
@@ -56,8 +56,10 @@ function actionBody(payload) {
     idempotency_key: payload.idempotency_key || undefined,
     payload: {
       currency: payload.currency || 'LKR',
+      dry_run: Boolean(payload.dry_run),
       categories: payload.categories || [],
       mappings: payload.mappings || [],
+      corrections: payload.corrections || [],
       items: payload.items || [],
     },
   };
@@ -112,14 +114,20 @@ async function main() {
       dry_run: true,
       reason: body.reason,
       currency: body.payload.currency,
-      categories: (body.payload.categories || []).map((c) => c.name),
+      categories: (body.payload.categories || []).map((c) => ({ name: c.name, type: c.type || 'expense' })),
       mappings: (body.payload.mappings || []).map((m) => ({
         merchant_pattern: m.merchant_pattern,
         description_pattern: m.description_pattern || '',
         category: m.category,
       })),
+      corrections: (body.payload.corrections || []).map((row) => ({
+        transaction_id: row.transaction_id,
+        set_fields: Object.keys(row.set || {}),
+        has_expected: Boolean(row.expected),
+      })),
       items: (body.payload.items || []).map((item) => ({
         date: item.date,
+        type: item.type || 'expense',
         merchant: item.merchant || null,
         category: item.category || null,
         client_key: item.client_key || null,
