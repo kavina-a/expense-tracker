@@ -14,7 +14,12 @@ function publicOrigin(req) {
 function jsonError(res, err) {
   const status = err.status || 500;
   if (status >= 500) console.error('[v1]', err);
-  res.status(status).json({ ok: false, error: err.message || 'Internal server error' });
+  const body = { ok: false, error: err.message || 'Internal server error' };
+  if (err.code) body.code = err.code;
+  if (err.current) body.current = err.current;
+  if (err.expected) body.expected = err.expected;
+  if (err.mismatches) body.mismatches = err.mismatches;
+  res.status(status).json(body);
 }
 
 function wrap(fn) {
@@ -69,6 +74,20 @@ const PATHS = {
       },
     },
   },
+  '/transactions/{id}': {
+    get: {
+      operationId: 'getTransaction',
+      summary: 'One transaction by id (no raw SMS text)',
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'integer' } },
+      ],
+      responses: {
+        200: { description: 'Transaction' },
+        404: { description: 'Not found' },
+        401: { description: 'Missing or invalid API key' },
+      },
+    },
+  },
   '/categories': {
     get: {
       operationId: 'listCategories',
@@ -105,31 +124,20 @@ const PATHS = {
       operationId: 'postAgentAction',
       summary: 'Typed, reason-required Ledger write',
       description: [
-        'Allowed types: ensure_category, upsert_mapping, capture_expense, capture_batch.',
-        'capture_expense matches type=expense by Colombo date + amount (cents).',
-        'A unique match is enriched (no second row). Several matches return needs_review.',
-        'No match inserts source=ledger with account_masked left null unless the payload supplied one.',
-        'Do not send account, card, or time-of-day unless the user actually provided them.',
-        'currency must be LKR. Replay the same idempotency_key to no-op.',
-        'Agent keys may POST only this path. Deletes, backup, and dashboard writes stay forbidden.',
+        'Types: ensure_category, upsert_mapping, capture_expense, capture_income, capture_batch, correct_transaction.',
+        'Capture matches the same type by exact Colombo date + amount (cents). Nearby amounts or dates are never matched.',
+        'A unique exact hit is enriched. Several exact hits return needs_review. A miss inserts source=ledger with account_masked null.',
+        'correct_transaction updates one existing row by id. expected.date and expected.amount must match the current row or the call returns 409.',
+        'Corrections change accounting fields only. SMS raw text, source, account, and occurred_at are left alone. No balancing fees are invented.',
+        'dry_run=true previews without writing and does not consume idempotency_key.',
+        'currency must be LKR. Do not send account, card, or time-of-day unless the user supplied evidence.',
+        'Agent keys may POST only this path.',
       ].join(' '),
       requestBody: {
         required: true,
         content: {
           'application/json': {
-            schema: {
-              type: 'object',
-              required: ['type', 'reason'],
-              properties: {
-                type: {
-                  type: 'string',
-                  enum: ['ensure_category', 'upsert_mapping', 'capture_expense', 'capture_batch'],
-                },
-                reason: { type: 'string' },
-                idempotency_key: { type: 'string' },
-                payload: { type: 'object' },
-              },
-            },
+            schema: { $ref: '#/components/schemas/AgentActionRequest' },
           },
         },
       },
@@ -138,6 +146,129 @@ const PATHS = {
         400: { description: 'Validation error' },
         401: { description: 'Missing or invalid API key' },
         403: { description: 'Key scope cannot write' },
+        409: { description: 'correct_transaction expected originals do not match' },
+      },
+    },
+  },
+};
+
+const SCHEMAS = {
+  CaptureItem: {
+    type: 'object',
+    required: ['date', 'amount'],
+    properties: {
+      date: { type: 'string', format: 'date', description: 'Colombo calendar day YYYY-MM-DD' },
+      amount: { type: 'number', exclusiveMinimum: 0 },
+      currency: { type: 'string', enum: ['LKR'] },
+      type: { type: 'string', enum: ['expense', 'income'], default: 'expense' },
+      merchant: { type: 'string' },
+      description: { type: 'string' },
+      category: { type: 'string' },
+      note: { type: 'string' },
+      client_key: { type: 'string' },
+      account_masked: { type: 'string', description: 'Omit unless the user supplied account evidence' },
+    },
+  },
+  ExpectedOriginals: {
+    type: 'object',
+    required: ['date', 'amount'],
+    description: 'Optimistic concurrency: must match the row as stored now.',
+    properties: {
+      date: { type: 'string', format: 'date' },
+      amount: { type: 'number' },
+      type: { type: 'string' },
+      category: { type: 'string' },
+    },
+  },
+  CorrectionSet: {
+    type: 'object',
+    description: 'Accounting fields to change. Does not alter SMS raw text, source, account, or occurred_at.',
+    properties: {
+      date: { type: 'string', format: 'date' },
+      amount: { type: 'number', exclusiveMinimum: 0 },
+      type: { type: 'string', enum: ['expense', 'income', 'investment', 'transfer'] },
+      category: { type: 'string' },
+      description: { type: 'string' },
+      note: { type: 'string' },
+      merchant: { type: 'string' },
+    },
+  },
+  CorrectTransactionPayload: {
+    type: 'object',
+    required: ['transaction_id', 'expected', 'set'],
+    properties: {
+      transaction_id: { type: 'integer' },
+      expected: { $ref: '#/components/schemas/ExpectedOriginals' },
+      set: { $ref: '#/components/schemas/CorrectionSet' },
+      dry_run: { type: 'boolean' },
+    },
+  },
+  CaptureBatchPayload: {
+    type: 'object',
+    properties: {
+      currency: { type: 'string', enum: ['LKR'] },
+      dry_run: { type: 'boolean' },
+      categories: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['name'],
+          properties: {
+            name: { type: 'string' },
+            type: { type: 'string', enum: ['expense', 'income', 'investment'] },
+            icon: { type: 'string' },
+            color: { type: 'string' },
+          },
+        },
+      },
+      mappings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['merchant_pattern', 'category'],
+          properties: {
+            merchant_pattern: { type: 'string' },
+            description_pattern: { type: 'string', description: 'Optional extra tokens; join with + to require all (e.g. DOMAIN+TAGGY)' },
+            category: { type: 'string' },
+            note: { type: 'string' },
+          },
+        },
+      },
+      corrections: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/CorrectTransactionPayload' },
+      },
+      items: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/CaptureItem' },
+      },
+    },
+  },
+  AgentActionRequest: {
+    type: 'object',
+    required: ['type', 'reason'],
+    properties: {
+      type: {
+        type: 'string',
+        enum: [
+          'ensure_category',
+          'upsert_mapping',
+          'capture_expense',
+          'capture_income',
+          'capture_batch',
+          'correct_transaction',
+        ],
+      },
+      reason: { type: 'string' },
+      idempotency_key: { type: 'string' },
+      dry_run: { type: 'boolean' },
+      payload: {
+        description: 'Shape depends on type. capture_expense/capture_income use CaptureItem; capture_batch uses CaptureBatchPayload; correct_transaction uses CorrectTransactionPayload.',
+        oneOf: [
+          { $ref: '#/components/schemas/CaptureItem' },
+          { $ref: '#/components/schemas/CaptureBatchPayload' },
+          { $ref: '#/components/schemas/CorrectTransactionPayload' },
+        ],
       },
     },
   },
@@ -148,7 +279,7 @@ function openApiDocument(req) {
     openapi: '3.1.0',
     info: {
       title: 'Suspense Tracker',
-      version: '1.1.0',
+      version: '1.2.0',
       description: [
         'Send Authorization: Bearer <api key> (or X-API-Key).',
         'An agent-scope key can GET these paths and POST /agent/actions.',
@@ -161,6 +292,7 @@ function openApiDocument(req) {
       securitySchemes: {
         bearerAuth: { type: 'http', scheme: 'bearer' },
       },
+      schemas: SCHEMAS,
     },
     security: [{ bearerAuth: [] }],
     paths: PATHS,
@@ -190,6 +322,10 @@ function mountV1(app) {
   app.get('/api/v1/agent/inbox', (_req, res) => {
     res.json(inboxPayload());
   });
+
+  app.get('/api/v1/transactions/:id', wrap((req, res) => {
+    res.json(capture.getPublicById(req.params.id));
+  }));
 
   app.get('/api/v1/transactions', wrap((req, res) => {
     const defaults = defaultMonthRange();
@@ -227,6 +363,7 @@ function mountV1(app) {
       reason: body.reason,
       payload: body.payload || {},
       idempotency_key: body.idempotency_key,
+      dry_run: body.dry_run,
       auth: req.auth,
     });
     res.json(result);

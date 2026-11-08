@@ -1,8 +1,8 @@
 // User-approved merchant → category mappings.
 //
 // More specific than category_rules: an optional description_pattern must also
-// appear in the merchant or description, so "CLOUDFLARE" + "DOMAIN" can map to
-// Taggy without tagging every Cloudflare charge.
+// appear in the merchant or description. Tokens joined with + are ANDed, so
+// CLOUDFLARE + DOMAIN+TAGGY maps only a Cloudflare domain charge for Taggy.
 
 const db = require('../db').connection;
 const { isoNow } = require('../time');
@@ -10,15 +10,9 @@ const { isoNow } = require('../time');
 const DEFAULT_MAPPINGS = [
   {
     merchant_pattern: 'CLOUDFLARE',
-    description_pattern: 'DOMAIN',
+    description_pattern: 'DOMAIN+TAGGY',
     category: 'Taggy',
-    note: 'Cloudflare domain for Taggy only; not every Cloudflare charge',
-  },
-  {
-    merchant_pattern: 'CLOUDFLARE',
-    description_pattern: 'TAGGY',
-    category: 'Taggy',
-    note: 'Cloudflare domain for Taggy only; not every Cloudflare charge',
+    note: 'Cloudflare domain for Taggy only; both DOMAIN and TAGGY must appear. Not every Cloudflare domain charge.',
   },
   {
     merchant_pattern: 'FASHN.AI',
@@ -57,7 +51,24 @@ function mappingRow(row) {
   };
 }
 
+function descriptionTokens(pattern) {
+  return String(pattern || '').split('+').map((part) => part.trim()).filter(Boolean);
+}
+
+function descriptionMatches(hay, pattern) {
+  const tokens = descriptionTokens(pattern);
+  if (!tokens.length) return true;
+  return tokens.every((token) => hay.includes(token));
+}
+
 function seedDefaultMappings() {
+  // Retire the overly broad CLOUDFLARE+DOMAIN / CLOUDFLARE+TAGGY alternatives.
+  db.prepare(`
+    DELETE FROM merchant_mappings
+     WHERE merchant_pattern = 'CLOUDFLARE'
+       AND description_pattern IN ('DOMAIN', 'TAGGY')
+  `).run();
+
   const insert = db.prepare(`
     INSERT OR IGNORE INTO merchant_mappings
       (merchant_pattern, description_pattern, category, approved_by, note, created_at)
@@ -112,7 +123,7 @@ function matchMerchantMapping(merchant, description = '') {
   if (!hay.trim()) return null;
   for (const row of listMappings()) {
     if (!hay.includes(row.merchant_pattern)) continue;
-    if (row.description_pattern && !hay.includes(row.description_pattern)) continue;
+    if (!descriptionMatches(hay, row.description_pattern)) continue;
     return row;
   }
   return null;

@@ -418,6 +418,25 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_agent_actions_created ON agent_actions(created_at, id);
     `,
   },
+  {
+    name: '006_cloudflare_domain_taggy',
+    // Mapping-rule correction only. No transaction rows are rewritten.
+    sql: `
+      DELETE FROM merchant_mappings
+       WHERE merchant_pattern = 'CLOUDFLARE'
+         AND description_pattern IN ('DOMAIN', 'TAGGY');
+      INSERT OR IGNORE INTO merchant_mappings
+        (merchant_pattern, description_pattern, category, approved_by, note, created_at)
+      VALUES (
+        'CLOUDFLARE',
+        'DOMAIN+TAGGY',
+        'Taggy',
+        'user',
+        'Cloudflare domain for Taggy only; both DOMAIN and TAGGY must appear',
+        datetime('now')
+      );
+    `,
+  },
 ];
 
 function appliedMigrationNames() {

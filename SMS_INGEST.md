@@ -102,7 +102,7 @@ When nothing matches, the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODE
 - `ledger` (default): nothing is sent to Telegram. Each prompt becomes a row in the `questions` table (`subject = 'txn'`, `options = {"kind": "category" | "note" | "mute", "choices": [...]}`), and Ledger reads it from `GET /api/agent/inbox`. The result of the ingest call has `notify_reason: "ledger_question"`. A muted merchant still gets no prompt. One question per expense, even if the SMS is processed again.
 - `telegram`: the original flow described below, unchanged.
 
-**Heads-up:** Ledger can read these questions and can record reviewed expenses / mappings through `POST /api/v1/agent/actions`. It still cannot tap inbox answers (category buttons, mute, notes) through the API; run production with `NOTIFY_CHANNEL=telegram` if you still want to answer those from your phone.
+**Heads-up:** Ledger can read these questions and can record reviewed expenses, income, mappings, and ID corrections through `POST /api/v1/agent/actions`. It still cannot tap inbox answers (category buttons, mute, notes) through the API; run production with `NOTIFY_CHANNEL=telegram` if you still want to answer those from your phone.
 
 ## Telegram notes
 
