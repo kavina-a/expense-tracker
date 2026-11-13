@@ -52,6 +52,9 @@ describe('ledger channel: SMS expenses become questions', () => {
     const options = JSON.parse(question.options);
     assert.equal(options.kind, 'category');
     assert.ok(options.choices.length > 0, 'offers the categories in use');
+    assert.equal(options.choices.includes('Food'), false);
+    assert.equal(options.choices.includes('Transport'), false);
+    assert.ok(options.choices.includes('Coffee Shop'));
   });
 
   it('asks for a note when the category is already known', async () => {

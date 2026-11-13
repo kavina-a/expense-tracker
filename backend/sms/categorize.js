@@ -2,8 +2,23 @@ const db = require('../db');
 const { log, logError } = require('../logger');
 const { completeJsonChat, extractJSON } = require('../parser');
 const { matchMerchantMapping } = require('../ledger/mappings');
+const { isAggregatorMerchant } = require('./aggregators');
 
 const PENDING_CATEGORY = 'pending_category';
+
+function isJsonValidateFailed(err) {
+  if (!err) return false;
+  const parts = [
+    err.message,
+    err.code,
+    err.type,
+    err.error?.code,
+    err.error?.message,
+    err.error?.failed_generation,
+    typeof err.error === 'string' ? err.error : '',
+  ].filter(Boolean).join(' ').toLowerCase();
+  return parts.includes('json_validate_failed') || parts.includes('json_validate');
+}
 
 function interpretCategoryGuess(raw, categories) {
   let parsed;
@@ -40,32 +55,53 @@ async function guessMerchantCategory({ merchant, categories }) {
       maxTokens: 60,
       meta: { merchant },
     });
+    if (!String(raw || '').trim()) {
+      log('warn', 'SmsCategory', 'json_validate_failed', { merchant, reason: 'empty_response' });
+      return { confident: false, category: null };
+    }
     return interpretCategoryGuess(raw, categories);
   } catch (err) {
-    logError('SmsCategory', err, { merchant });
+    if (isJsonValidateFailed(err)) {
+      log('warn', 'SmsCategory', 'json_validate_failed', { merchant });
+    } else {
+      logError('SmsCategory', err, { merchant });
+    }
     return { confident: false, category: null };
   }
 }
 
 async function resolveSmsCategory(merchant, guessCategory, extra = {}) {
+  // Payment methods are not shops. Never map, learn, or guess a global category.
+  if (isAggregatorMerchant(merchant)) {
+    return { category: PENDING_CATEGORY, via: 'pending' };
+  }
+
   const mapped = matchMerchantMapping(merchant, extra.description || extra.merchant_raw || '');
   if (mapped) return { category: mapped.category, via: 'mapping' };
 
   const rule = db.matchCategoryRule(merchant);
   if (rule) return { category: rule, via: 'rule' };
 
-  const categories = db.listCategoriesInUse();
+  const categories = db.listExpenseCategoryNames();
   if (typeof guessCategory === 'function' && merchant && categories.length) {
-    const guess = await guessCategory({ merchant, categories });
-    const canonical = guess?.confident
-      ? categories.find((name) => name.toLowerCase() === String(guess.category || '').toLowerCase())
-      : null;
-    if (canonical) {
-      db.upsertCategoryRule(merchant, canonical);
-      log('info', 'SmsCategory', 'llm_applied', { merchant, category: canonical });
-      return { category: canonical, via: 'llm' };
+    try {
+      const guess = await guessCategory({ merchant, categories });
+      const canonical = guess?.confident
+        ? categories.find((name) => name.toLowerCase() === String(guess.category || '').trim().toLowerCase())
+        : null;
+      if (canonical) {
+        db.upsertCategoryRule(merchant, canonical);
+        log('info', 'SmsCategory', 'llm_applied', { merchant, category: canonical });
+        return { category: canonical, via: 'llm' };
+      }
+      log('info', 'SmsCategory', 'llm_unsure', { merchant });
+    } catch (err) {
+      if (isJsonValidateFailed(err)) {
+        log('warn', 'SmsCategory', 'json_validate_failed', { merchant });
+      } else {
+        logError('SmsCategory', err, { merchant });
+      }
     }
-    log('info', 'SmsCategory', 'llm_unsure', { merchant });
   }
 
   return { category: PENDING_CATEGORY, via: 'pending' };
@@ -73,6 +109,7 @@ async function resolveSmsCategory(merchant, guessCategory, extra = {}) {
 
 module.exports = {
   PENDING_CATEGORY,
+  isJsonValidateFailed,
   interpretCategoryGuess,
   guessMerchantCategory,
   resolveSmsCategory,

@@ -109,11 +109,45 @@ async function registerWebhook(webhookUrl) {
   return data;
 }
 
+// HTTPS TELEGRAM_WEBHOOK_URL only. Idempotent setWebhook; never called with http/localhost.
+function webhookUrlFromEnv(env = process.env) {
+  const raw = String(env.TELEGRAM_WEBHOOK_URL || '').trim();
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') return null;
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return null;
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = /\/telegram$/i.test(pathname) ? pathname : `${pathname}/telegram`;
+  return parsed.toString();
+}
+
+async function maybeRegisterWebhook() {
+  if (!process.env.TELEGRAM_BOT_TOKEN) return { skipped: true, reason: 'no_token' };
+  const url = webhookUrlFromEnv();
+  if (!url) return { skipped: true, reason: 'no_https_url' };
+  try {
+    const data = await registerWebhook(url);
+    console.log('[Telegram] webhook registered', url);
+    return { ok: data?.ok === true, url };
+  } catch (err) {
+    console.warn('[Telegram] webhook register skipped:', err.message);
+    return { skipped: true, reason: 'setWebhook_failed' };
+  }
+}
+
 module.exports = {
   sendMessage,
   sendChartImage,
   downloadMedia,
   registerWebhook,
+  maybeRegisterWebhook,
+  webhookUrlFromEnv,
   answerCallbackQuery,
   editMessageReplyMarkup,
 };

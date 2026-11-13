@@ -2,6 +2,7 @@ const db = require('../db');
 const tg = require('../telegram');
 const { log } = require('../logger');
 const { PENDING_CATEGORY } = require('./categorize');
+const { isAggregatorMerchant } = require('./aggregators');
 const notify = require('../notify');
 
 function escapeHtml(value) {
@@ -77,7 +78,7 @@ function askLedgerAboutExpense(tx) {
   const pending = tx.category === PENDING_CATEGORY;
   const who = tx.merchant || 'Purchase';
   const amount = `LKR ${Number(tx.amount).toFixed(2)}`;
-  const choices = pending ? db.listCategoriesInUse() : [];
+  const choices = pending ? db.listExpenseCategoryNames() : [];
   const { question } = notify.ask({
     subject: 'txn',
     subjectId: tx.id,
@@ -101,7 +102,7 @@ async function notifySmsExpense(transaction, deps = {}) {
   const chatId = chatIdFrom(deps);
   if (!chatId) return { notified: false, reason: 'no_chat' };
 
-  const categories = tx.category === PENDING_CATEGORY ? db.listCategoriesInUse() : [];
+  const categories = tx.category === PENDING_CATEGORY ? db.listExpenseCategoryNames() : [];
   const sent = await sender(deps)(chatId, expenseMessage(tx), {
     reply_markup: keyboardFor(tx, categories),
   });
@@ -159,11 +160,16 @@ async function maybeSuggestMute(tx, deps) {
 }
 
 function applyCategory(tx, category) {
+  const resolved = db.resolveOrCreateExpenseCategory(category);
+  if (!resolved) return db.getTransactionById(tx.id);
   db.updateSmsExpense(tx.id, {
-    category,
+    category: resolved,
     category_reply_pending: 0,
   });
-  if (tx.merchant) db.upsertCategoryRule(tx.merchant, category);
+  if (tx.merchant && !isAggregatorMerchant(tx.merchant)) {
+    db.upsertCategoryRule(tx.merchant, resolved);
+  }
+  log('info', 'SmsCategory', 'telegram_applied', { id: tx.id, category: resolved });
   return db.getTransactionById(tx.id);
 }
 
@@ -231,7 +237,7 @@ async function handleSmsCallback(query, deps = {}) {
     if (!category) return { handled: true, action: 'ignored' };
     const updated = applyCategory(tx, category);
     await clearKeyboard(query, deps);
-    if (chatId) await send(chatId, `${escapeHtml(tx.merchant)} → ${escapeHtml(category)}`);
+    if (chatId) await send(chatId, `${escapeHtml(tx.merchant)} → ${escapeHtml(updated.category)}`);
     return { handled: true, action: 'category', transaction: updated };
   }
 
@@ -365,9 +371,9 @@ async function handleSmsTextReply(message, deps = {}) {
   const chatId = message.chat?.id || chatIdFrom(deps);
   const send = sender({ ...deps, chatId });
 
-  if (tx.category_reply_pending) {
+  if (tx.category === PENDING_CATEGORY || tx.category_reply_pending) {
     const updated = applyCategory(tx, text);
-    if (chatId) await send(chatId, `${escapeHtml(tx.merchant)} → ${escapeHtml(text)}`);
+    if (chatId) await send(chatId, `${escapeHtml(tx.merchant)} → ${escapeHtml(updated.category)}`);
     return { handled: true, action: 'category_text', transaction: updated };
   }
 

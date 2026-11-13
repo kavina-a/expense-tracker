@@ -140,7 +140,12 @@ app.post('/telegram', async (req, res) => {
     return res.sendStatus(403);
   }
 
-  res.sendStatus(200); // Always ack immediately
+  let answered = false;
+  const ack = (status = 200) => {
+    if (answered) return;
+    answered = true;
+    res.sendStatus(status);
+  };
 
   try {
     const update = req.body;
@@ -149,19 +154,27 @@ app.post('/telegram', async (req, res) => {
 
     if (!process.env.MY_TELEGRAM_CHAT_ID) {
       console.error('[Telegram] MY_TELEGRAM_CHAT_ID not set — ignoring all messages');
+      ack();
       return;
     }
 
     const chatId = message?.chat?.id;
-    if (!chatId || String(chatId) !== process.env.MY_TELEGRAM_CHAT_ID) return;
+    if (!chatId || String(chatId) !== process.env.MY_TELEGRAM_CHAT_ID) {
+      ack();
+      return;
+    }
 
     if (callback) {
       await handleSmsCallback(callback);
       clearPending('telegram', chatId);
+      ack();
       return;
     }
 
-    if (!message) return;
+    if (!message) {
+      ack();
+      return;
+    }
 
     const tgSender = {
       sendText:  (text) => tg.sendMessage(chatId, text),
@@ -175,11 +188,13 @@ app.post('/telegram', async (req, res) => {
       const media = await tg.downloadMedia(clip.file_id);
       if (!media) {
         await tg.sendMessage(chatId, 'Could not download that voice message. Try again.');
+        ack();
         return;
       }
       const heard = await transcribeAudio(media.buffer, media.filename);
       if (!heard) {
         await tg.sendMessage(chatId, 'Could not make out that voice message. Try again.');
+        ack();
         return;
       }
       await tg.sendMessage(chatId, `Heard: ${escapeHtml(heard)}`);
@@ -190,9 +205,27 @@ app.post('/telegram', async (req, res) => {
       const smsReply = await handleSmsTextReply(incoming);
       if (smsReply) {
         clearPending('telegram', chatId);
+        ack();
         return;
       }
     }
+
+    if (incoming.text) {
+      const dismissed = await handleSmsDismissal(incoming);
+      if (dismissed) {
+        clearPending('telegram', chatId);
+        ack();
+        return;
+      }
+      const smsNote = await handleSmsLooseNote(incoming);
+      if (smsNote) {
+        clearPending('telegram', chatId);
+        ack();
+        return;
+      }
+    }
+
+    ack();
 
     console.log(`[Telegram] Message from chat ${chatId}: type=${incoming.photo ? 'image' : 'text'}`);
 
@@ -205,22 +238,13 @@ app.post('/telegram', async (req, res) => {
     } else if (incoming.text) {
       const text = incoming.text.trim();
       if (!text) return;
-      const dismissed = await handleSmsDismissal(incoming);
-      if (dismissed) {
-        clearPending('telegram', chatId);
-        return;
-      }
-      const smsNote = await handleSmsLooseNote(incoming);
-      if (smsNote) {
-        clearPending('telegram', chatId);
-        return;
-      }
       await processMessage({ type: 'text', text, rawText: text, channel: 'telegram', chatId }, tgSender);
     } else {
       await tg.sendMessage(chatId, 'I can only process text messages, voice notes, and receipt images.');
     }
   } catch (err) {
     console.error('[Telegram] Webhook error:', err);
+    ack();
     try {
       const chatId = req.body?.message?.chat?.id || req.body?.callback_query?.message?.chat?.id;
       if (chatId && String(chatId) === process.env.MY_TELEGRAM_CHAT_ID) {
@@ -494,6 +518,9 @@ if (fs.existsSync(FRONTEND_DIST)) {
 const PORT = process.env.PORT || 3000;
 if (require.main === module) app.listen(PORT, () => {
   require('./sms/heartbeat').startHeartbeat();
+  tg.maybeRegisterWebhook().catch((err) => {
+    console.warn('[Telegram] webhook register skipped:', err.message);
+  });
   const info = db.getDbInfo();
   console.log(`\n🚀  Money Tracker running`);
   console.log(`💾  Database:         ${info.dbPath}`);

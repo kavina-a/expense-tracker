@@ -17,7 +17,7 @@ const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../db');
 const { ingestSmsText } = require('./ingest');
-const { interpretCategoryGuess } = require('./categorize');
+const { interpretCategoryGuess, isJsonValidateFailed } = require('./categorize');
 const { handleSmsCallback, handleSmsTextReply, handleSmsLooseNote, handleSmsDismissal } = require('./telegramNotify');
 const {
   realInternetUber,
@@ -87,6 +87,20 @@ describe('category guess interpretation', () => {
       interpretCategoryGuess('{"category":"Pets"}', categories),
       { confident: false, category: null },
     );
+    assert.deepEqual(
+      interpretCategoryGuess('not json', categories),
+      { confident: false, category: null },
+    );
+    assert.deepEqual(
+      interpretCategoryGuess('{"category":""}', categories),
+      { confident: false, category: null },
+    );
+    assert.deepEqual(
+      interpretCategoryGuess('{"category":"   "}', categories),
+      { confident: false, category: null },
+    );
+    assert.equal(isJsonValidateFailed({ error: { code: 'json_validate_failed' } }), true);
+    assert.equal(isJsonValidateFailed(new Error('boom')), false);
   });
 });
 
@@ -101,12 +115,12 @@ describe('SMS category resolution and Telegram notes', () => {
       ...deps,
     });
     assert.equal(calls, 0);
-    assert.equal(result.category, 'Transport');
+    assert.equal(result.category, 'Uber');
     assert.equal(result.category_via, 'rule');
     assert.equal(result.notified, true);
     assert.equal(result.notify_reason, 'sent');
     const row = db.getTransactionById(result.transaction_id);
-    assert.equal(row.category, 'Transport');
+    assert.equal(row.category, 'Uber');
     assert.ok(row.telegram_notify_message_id);
   });
 
@@ -118,10 +132,10 @@ describe('SMS category resolution and Telegram notes', () => {
       notify: true,
       ...deps,
     });
-    assert.equal(result.category, 'Transport');
+    assert.equal(result.category, 'Uber');
     assert.equal(sent.length, 1);
     assert.match(sent[0].text, /UBER/);
-    assert.match(sent[0].text, /Transport/);
+    assert.match(sent[0].text, /Uber/);
     assert.doesNotMatch(sent[0].text, /What category/);
     const buttons = sent[0].options.reply_markup.inline_keyboard.flat();
     assert.equal(buttons.length, 2);
@@ -180,6 +194,16 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.ok(data.includes(`s:u:${result.transaction_id}`));
     assert.ok(data.includes(`s:n:${result.transaction_id}`));
     assert.ok(data.includes(`s:i:${result.transaction_id}`));
+    const labels = sent[0].options.reply_markup.inline_keyboard.flat().map((button) => button.text);
+    assert.ok(labels.includes('Groceries'));
+    assert.ok(labels.includes('Uber'));
+    assert.ok(labels.includes('Uber Eats'));
+    assert.equal(labels.includes('Food'), false);
+    assert.equal(labels.includes('Transport'), false);
+    assert.deepEqual(
+      db.listExpenseCategoryNames().sort(),
+      db.getCategories().filter((row) => (row.type === 'expense' || !row.type) && row.name !== 'Uncategorized').map((row) => row.name).sort(),
+    );
   });
 
   it('drops an ignored charge from the totals and can skip that payee next time', async () => {
@@ -243,6 +267,16 @@ describe('SMS category resolution and Telegram notes', () => {
     const second = db.getTransactionById(newer.transaction_id);
     assert.notEqual(first.telegram_notify_message_id, second.telegram_notify_message_id);
 
+    const categorized = await handleSmsTextReply({
+      text: 'Coffee Shop',
+      chat: { id: '42' },
+      reply_to_message: { message_id: first.telegram_notify_message_id },
+    }, box.deps);
+    assert.equal(categorized.action, 'category_text');
+    assert.equal(db.getTransactionById(first.id).category, 'Coffee Shop');
+    assert.equal(db.getTransactionById(first.id).note, null);
+    assert.equal(db.getTransactionById(second.id).category, 'pending_category');
+
     const handled = await handleSmsTextReply({
       text: 'Dinemore with Kissie',
       chat: { id: '42' },
@@ -250,6 +284,7 @@ describe('SMS category resolution and Telegram notes', () => {
     }, box.deps);
     assert.equal(handled.action, 'note');
     assert.equal(db.getTransactionById(first.id).note, 'Dinemore with Kissie');
+    assert.equal(db.getTransactionById(first.id).category, 'Coffee Shop');
     assert.equal(db.getTransactionById(second.id).note, null);
 
     const missed = await handleSmsTextReply({
@@ -311,6 +346,15 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.equal(db.getTransactionById(second.transaction_id).note, null);
 
     const cinema = db.getTransactionById(second.transaction_id);
+    const categorized = await handleSmsTextReply({
+      text: 'Concert',
+      chat: { id: '42' },
+      reply_to_message: { message_id: cinema.telegram_notify_message_id },
+    }, deps);
+    assert.equal(categorized.action, 'category_text');
+    assert.equal(db.getTransactionById(cinema.id).category, 'Concert');
+    assert.equal(db.getTransactionById(cinema.id).note, null);
+
     const saved = await handleSmsTextReply({
       text: 'with the group',
       chat: { id: '42' },
@@ -319,6 +363,7 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.equal(saved.action, 'note');
     assert.equal(db.getTransactionById(cinema.id).note, 'with the group');
     assert.equal(db.getTransactionById(first.transaction_id).note, null);
+    assert.equal(db.getTransactionById(first.transaction_id).category, 'pending_category');
   });
 
   it('treats "no note needed" as a dismissal and does not ask for an amount', async () => {
@@ -502,6 +547,90 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.equal(named.note, null);
     assert.equal(named.category_reply_pending, 0);
     assert.equal(db.matchCategoryRule('PETS VET'), 'Vet');
+    assert.ok(db.getCategories().some((row) => row.name === 'Vet' && row.type === 'expense'));
+  });
+
+  it('applies a case-insensitive reply-to as a category while pending, then a note once set', async () => {
+    const { deps } = recorder();
+    const pending = await ingestSmsText({
+      text: purchase({ merchant: 'NEWCAFE', amount: '480.00', time: '09:11' }),
+      guessCategory: null,
+      notify: true,
+      ...deps,
+    });
+    const tx = db.getTransactionById(pending.transaction_id);
+    const applied = await handleSmsTextReply({
+      text: 'coffee shop',
+      chat: { id: '42' },
+      reply_to_message: { message_id: tx.telegram_notify_message_id },
+    }, deps);
+    assert.equal(applied.action, 'category_text');
+    assert.equal(db.getTransactionById(tx.id).category, 'Coffee Shop');
+    assert.equal(db.getTransactionById(tx.id).note, null);
+    assert.equal(db.matchCategoryRule('NEWCAFE'), 'Coffee Shop');
+
+    const noted = await handleSmsTextReply({
+      text: 'latte with Sam',
+      chat: { id: '42' },
+      reply_to_message: { message_id: tx.telegram_notify_message_id },
+    }, deps);
+    assert.equal(noted.action, 'note');
+    assert.equal(db.getTransactionById(tx.id).note, 'latte with Sam');
+    assert.equal(db.getTransactionById(tx.id).category, 'Coffee Shop');
+  });
+
+  it('does not learn a global category for Mintpay and leaves Groq failures pending', async () => {
+    const { sent, deps } = recorder();
+    const groqFail = Object.assign(new Error('Failed to validate JSON'), {
+      error: { code: 'json_validate_failed' },
+    });
+    const pending = await ingestSmsText({
+      text: purchase({ merchant: 'MINTPAY PVT LTD', amount: '2181.89', time: '19:01' }),
+      guessCategory: async () => { throw groqFail; },
+      notify: true,
+      ...deps,
+    });
+    assert.equal(pending.category, 'pending_category');
+    assert.equal(pending.category_via, 'pending');
+    assert.equal(db.matchCategoryRule('MINTPAY PVT LTD'), null);
+    assert.match(sent[0].text, /What category is this/);
+
+    const tx = db.getTransactionById(pending.transaction_id);
+    const options = JSON.parse(tx.category_prompt_options);
+    const index = options.indexOf('Coffee Shop');
+    assert.ok(index >= 0);
+
+    const logs = [];
+    const orig = console.log;
+    console.log = (line) => { logs.push(String(line)); orig(line); };
+    try {
+      await handleSmsCallback(callback(`s:c:${tx.id}:${index}`, tx), deps);
+    } finally {
+      console.log = orig;
+    }
+    const applied = db.getTransactionById(tx.id);
+    assert.equal(applied.category, 'Coffee Shop');
+    assert.equal(db.matchCategoryRule('MINTPAY PVT LTD'), null);
+
+    const hit = logs.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((entry) => entry && entry.scope === 'SmsCategory' && entry.message === 'telegram_applied');
+    assert.ok(hit);
+    assert.equal(hit.id, tx.id);
+    assert.equal(hit.category, 'Coffee Shop');
+    assert.equal(hit.amount, undefined);
+    assert.equal(hit.merchant, undefined);
+
+    const odd = await ingestSmsText({
+      text: purchase({ merchant: 'ODD MERCHANT XYZ', amount: '33.00', time: '19:02' }),
+      guessCategory: async () => { throw groqFail; },
+      notify: true,
+      ...deps,
+    });
+    assert.equal(odd.category, 'pending_category');
+    assert.equal(odd.category_via, 'pending');
+    assert.equal(db.matchCategoryRule('ODD MERCHANT XYZ'), null);
+    assert.equal(db.getTransactionById(odd.transaction_id).category, 'pending_category');
   });
 
   it('notifies Telegram for each real HNB sample, including BillPmt', async () => {
