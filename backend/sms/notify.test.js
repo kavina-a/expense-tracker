@@ -584,42 +584,32 @@ describe('SMS category resolution and Telegram notes', () => {
     const groqFail = Object.assign(new Error('Failed to validate JSON'), {
       error: { code: 'json_validate_failed' },
     });
+    let guessed = 0;
     const pending = await ingestSmsText({
       text: purchase({ merchant: 'MINTPAY PVT LTD', amount: '2181.89', time: '19:01' }),
-      guessCategory: async () => { throw groqFail; },
+      guessCategory: async () => { guessed += 1; throw groqFail; },
       notify: true,
       ...deps,
     });
     assert.equal(pending.category, 'pending_category');
-    assert.equal(pending.category_via, 'pending');
+    assert.equal(pending.category_via, 'aggregator');
+    assert.equal(guessed, 0);
     assert.equal(db.matchCategoryRule('MINTPAY PVT LTD'), null);
-    assert.match(sent[0].text, /What category is this/);
+    assert.match(sent[0].text, /payment method, not the shop/);
+    const mintButtons = sent[0].options.reply_markup.inline_keyboard.flat().map((button) => button.callback_data);
+    assert.ok(mintButtons.includes(`s:a:${pending.transaction_id}:pay_now`));
+    assert.equal(mintButtons.some((data) => data.startsWith('s:c:')), false);
 
     const tx = db.getTransactionById(pending.transaction_id);
-    const options = JSON.parse(tx.category_prompt_options);
-    const index = options.indexOf('Coffee Shop');
-    assert.ok(index >= 0);
-
-    const logs = [];
-    const orig = console.log;
-    console.log = (line) => { logs.push(String(line)); orig(line); };
-    try {
-      await handleSmsCallback(callback(`s:c:${tx.id}:${index}`, tx), deps);
-    } finally {
-      console.log = orig;
-    }
-    const applied = db.getTransactionById(tx.id);
-    assert.equal(applied.category, 'Coffee Shop');
+    const shop = await handleSmsTextReply({
+      text: 'Barista Colpetty',
+      chat: { id: '42' },
+      reply_to_message: { message_id: tx.telegram_notify_message_id },
+    }, deps);
+    assert.equal(shop.action, 'aggregator_store');
+    assert.equal(db.getTransactionById(tx.id).description, 'Barista Colpetty');
+    assert.equal(db.getTransactionById(tx.id).category, 'pending_category');
     assert.equal(db.matchCategoryRule('MINTPAY PVT LTD'), null);
-
-    const hit = logs.map((line) => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).find((entry) => entry && entry.scope === 'SmsCategory' && entry.message === 'telegram_applied');
-    assert.ok(hit);
-    assert.equal(hit.id, tx.id);
-    assert.equal(hit.category, 'Coffee Shop');
-    assert.equal(hit.amount, undefined);
-    assert.equal(hit.merchant, undefined);
 
     const odd = await ingestSmsText({
       text: purchase({ merchant: 'ODD MERCHANT XYZ', amount: '33.00', time: '19:02' }),
@@ -630,7 +620,29 @@ describe('SMS category resolution and Telegram notes', () => {
     assert.equal(odd.category, 'pending_category');
     assert.equal(odd.category_via, 'pending');
     assert.equal(db.matchCategoryRule('ODD MERCHANT XYZ'), null);
-    assert.equal(db.getTransactionById(odd.transaction_id).category, 'pending_category');
+    const oddTx = db.getTransactionById(odd.transaction_id);
+    assert.match(sent.find((message) => message.text.includes('ODD MERCHANT XYZ')).text, /What category is this/);
+    const options = JSON.parse(oddTx.category_prompt_options);
+    const index = options.indexOf('Coffee Shop');
+    assert.ok(index >= 0);
+
+    const logs = [];
+    const orig = console.log;
+    console.log = (line) => { logs.push(String(line)); orig(line); };
+    try {
+      await handleSmsCallback(callback(`s:c:${oddTx.id}:${index}`, oddTx), deps);
+    } finally {
+      console.log = orig;
+    }
+    assert.equal(db.getTransactionById(oddTx.id).category, 'Coffee Shop');
+    const hit = logs.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((entry) => entry && entry.scope === 'SmsCategory' && entry.message === 'telegram_applied');
+    assert.ok(hit);
+    assert.equal(hit.id, oddTx.id);
+    assert.equal(hit.category, 'Coffee Shop');
+    assert.equal(hit.amount, undefined);
+    assert.equal(hit.merchant, undefined);
   });
 
   it('notifies Telegram for each real HNB sample, including BillPmt', async () => {

@@ -149,6 +149,33 @@ function listOpenQuestions(limit = 100) {
   `).all(limit).map(hydrateQuestion);
 }
 
+function resolveQuestionsForSubject(subject, subjectId, { resolution, answerText, resolvedBy } = {}) {
+  if (!subject || subjectId == null) return 0;
+  const info = db.prepare(`
+    UPDATE questions
+       SET resolution = ?, answer_text = ?, resolved_by = ?, resolved_at = ?
+     WHERE subject = ? AND subject_id = ? AND resolution IS NULL
+  `).run(
+    resolution || 'answered',
+    answerText || null,
+    resolvedBy || 'ledger',
+    isoNow(),
+    subject,
+    subjectId,
+  );
+  return info.changes;
+}
+
+function resolveEscalationByKey(dedupeKey, resolvedBy = 'ledger') {
+  if (!dedupeKey) return 0;
+  const info = db.prepare(`
+    UPDATE escalations
+       SET status = 'resolved', resolved_by = ?, resolved_at = ?
+     WHERE dedupe_key = ? AND status = 'open'
+  `).run(resolvedBy, isoNow(), dedupeKey);
+  return info.changes;
+}
+
 module.exports = {
   ESCALATION_TYPES,
   channel,
@@ -156,4 +183,6 @@ module.exports = {
   ask,
   listOpenEscalations,
   listOpenQuestions,
+  resolveQuestionsForSubject,
+  resolveEscalationByKey,
 };

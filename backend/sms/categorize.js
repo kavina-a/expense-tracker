@@ -73,7 +73,7 @@ async function guessMerchantCategory({ merchant, categories }) {
 async function resolveSmsCategory(merchant, guessCategory, extra = {}) {
   // Payment methods are not shops. Never map, learn, or guess a global category.
   if (isAggregatorMerchant(merchant)) {
-    return { category: PENDING_CATEGORY, via: 'pending' };
+    return { category: PENDING_CATEGORY, via: 'aggregator' };
   }
 
   const mapped = matchMerchantMapping(merchant, extra.description || extra.merchant_raw || '');

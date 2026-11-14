@@ -1456,7 +1456,9 @@ function updateSmsExpense(id, fields) {
         telegram_notify_message_id = ?,
         category_reply_pending = ?,
         category_prompt_options = ?,
-        category_prompt_message_id = ?
+        category_prompt_message_id = ?,
+        description = ?,
+        needs_review = ?
     WHERE id = ?
   `).run(
     next.category,
@@ -1466,6 +1468,8 @@ function updateSmsExpense(id, fields) {
     next.category_reply_pending ? 1 : 0,
     next.category_prompt_options ?? null,
     next.category_prompt_message_id ?? null,
+    next.description ?? null,
+    next.needs_review ? 1 : 0,
     id,
   );
   return getTransactionById(id);

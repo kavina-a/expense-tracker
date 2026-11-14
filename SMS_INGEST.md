@@ -93,24 +93,24 @@ Masked numbers are stored only in canonical form: first 4 digits, `***`, last 2 
 
 `category_rules` maps a merchant substring to a category, longest pattern first, case-insensitive. Seeded rules use names that already exist in `categories`: `UBER EATS` → Uber Eats; `FOODPANDA` and `PICKME FOOD` → Fast Food; `UBER` → Uber. Migration `007_remap_food_transport_rules` rewrites older Food/Transport rules the same way. Existing transaction rows are not bulk-edited.
 
-When nothing matches, the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODEL` the Telegram parser uses) to pick one name from the expense `categories` table — not ghost names that only lived on old rules. A name it returns that is on that list is saved on the expense and written back into `category_rules`, so the next SMS for that merchant does not call the model. `unsure`, an invented name, empty JSON, or a Groq `json_validate_failed` leaves `category` as `pending_category` and asks. That is not the same as `Uncategorized`: pending means the question is still open. `Uncategorized` is only written when you tap that button in Telegram.
+**Mintpay is not a shop.** `MINTPAY` / `MINTPAY PVT LTD` skip mappings, `category_rules`, and Groq. The charge stays on the books as `pending_category` and Ledger is asked what the underlying purchase was and whether it was Pay Now or instalments. Answering one Mintpay charge does not teach a global Mintpay category. Use `resolve_aggregator` on `POST /api/v1/agent/actions` for that row only.
 
-Mintpay (and other payment aggregators) are not shops. They are never mapped, guessed, or learned as a global category. A tap or typed name can still file **that one charge**; it does not write a MINTPAY rule.
+When nothing matches (and the merchant is not an aggregator), the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODEL` the Telegram parser uses) to pick one name from the expense `categories` table — not ghost names that only lived on old rules. A name it returns that is on that list is saved on the expense and written back into `category_rules`, so the next SMS for that merchant does not call the model. `unsure`, an invented name, empty JSON, or a Groq `json_validate_failed` leaves `category` as `pending_category` and asks. That is not the same as `Uncategorized`: pending means the question is still open. `Uncategorized` is only written when you tap that button in Telegram.
 
 ## Where prompts go: `NOTIFY_CHANNEL`
 
 `NOTIFY_CHANNEL` decides who gets asked about a new SMS expense.
 
-- `ledger` (default): nothing is sent to Telegram. Each prompt becomes a row in the `questions` table (`subject = 'txn'`, `options = {"kind": "category" | "note" | "mute", "choices": [...]}`), and Ledger reads it from `GET /api/agent/inbox`. The result of the ingest call has `notify_reason: "ledger_question"`. A muted merchant still gets no prompt. One question per expense, even if the SMS is processed again.
+- `ledger` (default): nothing is sent to Telegram. Each prompt becomes a row in the `questions` table (`subject = 'txn'`, `options = {"kind": "category" | "note" | "mute" | "aggregator", "choices": [...]}`), and Ledger reads it from `GET /api/agent/inbox`. The result of the ingest call has `notify_reason: "ledger_question"`. A muted merchant still gets no prompt. One question per expense, even if the SMS is processed again.
 - `telegram`: the original flow described below, unchanged.
 
-**Heads-up:** Ledger can read these questions and can record reviewed expenses, income, mappings, and ID corrections through `POST /api/v1/agent/actions`. It still cannot tap inbox answers (category buttons, mute, notes) through the API; run production with `NOTIFY_CHANNEL=telegram` if you still want to answer those from your phone.
+**Heads-up:** Ledger can read these questions and can record reviewed expenses, income, mappings, ID corrections, and one-off Mintpay (aggregator) answers through `POST /api/v1/agent/actions`. Category-button / mute / note taps are still Telegram-only; Mintpay must not be mapped as a shop.
 
 ## Telegram notes
 
 (These apply when `NOTIFY_CHANNEL=telegram`.) Every new SMS expense is sent to `MY_TELEGRAM_CHAT_ID`, including ones that already have a category. The message has the merchant, amount, and category (or category buttons when it is still `pending_category`), plus **👍 No note needed**. Category buttons come from the expense `categories` table only.
 
-While the row is still `pending_category`, a reply to that message (or a category-button tap) runs `applyCategory`: it matches an existing name case-insensitively, or inserts a new expense category so the web `catMap` can show it. Notes are only saved once a category is set. The note is never filled in by the model.
+While a normal SMS row is still `pending_category`, a reply to that message (or a category-button tap) runs `applyCategory`: it matches an existing name case-insensitively, or inserts a new expense category so the web `catMap` can show it. Notes are only saved once a category is set. The note is never filled in by the model. A Mintpay reply is the shop for **that charge only** (Pay Now / instalments buttons), not a global category.
 
 Ignoring the message changes nothing. **No note needed** sets `note_reviewed` and does not set `note`. Three of those taps in a row for the same merchant, with no note in between, asks whether to mute that merchant. **Yes, mute** stops future note messages for that merchant; category matching still runs. **No, keep asking** waits for another three taps before asking again.
 

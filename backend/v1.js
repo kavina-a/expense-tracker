@@ -124,11 +124,12 @@ const PATHS = {
       operationId: 'postAgentAction',
       summary: 'Typed, reason-required Ledger write',
       description: [
-        'Types: ensure_category, upsert_mapping, capture_expense, capture_income, capture_batch, correct_transaction.',
+        'Types: ensure_category, upsert_mapping, capture_expense, capture_income, capture_batch, correct_transaction, resolve_aggregator.',
         'Capture matches the same type by exact Colombo date + amount (cents). Nearby amounts or dates are never matched.',
         'A unique exact hit is enriched. Several exact hits return needs_review. A miss inserts source=ledger with account_masked null.',
         'correct_transaction updates one existing row by id. expected.date and expected.amount must match the current row or the call returns 409.',
         'Corrections change accounting fields only. SMS raw text, source, account, and occurred_at are left alone. No balancing fees are invented.',
+        'resolve_aggregator records the shop and Pay Now vs instalments for one Mintpay (aggregator) charge. It does not teach a global Mintpay category.',
         'dry_run=true previews without writing and does not consume idempotency_key.',
         'currency must be LKR. Do not send account, card, or time-of-day unless the user supplied evidence.',
         'Agent keys may POST only this path.',
@@ -191,6 +192,18 @@ const SCHEMAS = {
       description: { type: 'string' },
       note: { type: 'string' },
       merchant: { type: 'string' },
+    },
+  },
+  ResolveAggregatorPayload: {
+    type: 'object',
+    required: ['transaction_id'],
+    description: 'Answer one aggregator (Mintpay) charge. Does not write merchant mappings or category_rules.',
+    properties: {
+      transaction_id: { type: 'integer' },
+      store: { type: 'string', description: 'Underlying shop or purchase' },
+      payment: { type: 'string', enum: ['pay_now', 'instalments'] },
+      category: { type: 'string', description: 'Optional category for this charge only' },
+      dry_run: { type: 'boolean' },
     },
   },
   CorrectTransactionPayload: {
@@ -257,17 +270,19 @@ const SCHEMAS = {
           'capture_income',
           'capture_batch',
           'correct_transaction',
+          'resolve_aggregator',
         ],
       },
       reason: { type: 'string' },
       idempotency_key: { type: 'string' },
       dry_run: { type: 'boolean' },
       payload: {
-        description: 'Shape depends on type. capture_expense/capture_income use CaptureItem; capture_batch uses CaptureBatchPayload; correct_transaction uses CorrectTransactionPayload.',
+        description: 'Shape depends on type. capture_expense/capture_income use CaptureItem; capture_batch uses CaptureBatchPayload; correct_transaction uses CorrectTransactionPayload; resolve_aggregator uses ResolveAggregatorPayload.',
         oneOf: [
           { $ref: '#/components/schemas/CaptureItem' },
           { $ref: '#/components/schemas/CaptureBatchPayload' },
           { $ref: '#/components/schemas/CorrectTransactionPayload' },
+          { $ref: '#/components/schemas/ResolveAggregatorPayload' },
         ],
       },
     },
@@ -279,7 +294,7 @@ function openApiDocument(req) {
     openapi: '3.1.0',
     info: {
       title: 'Suspense Tracker',
-      version: '1.2.0',
+      version: '1.3.0',
       description: [
         'Send Authorization: Bearer <api key> (or X-API-Key).',
         'An agent-scope key can GET these paths and POST /agent/actions.',

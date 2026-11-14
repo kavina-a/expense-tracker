@@ -2,6 +2,22 @@
 
 Plain-English notes on each phase of the autonomy work.
 
+## Mintpay is a payment method, not a shop
+
+**Before this:** a Mintpay bank SMS was treated like any merchant. A leftover `category_rules` row, a Ledger mapping, a Groq guess, or one Telegram category tap could stamp **every** later Mintpay charge with the same category (for example Out w Friends), even though Mintpay is only the way the card was charged.
+
+**What changed**
+
+- Mintpay (`MINTPAY`, `MINTPAY PVT LTD`) is an **aggregator**. SMS ingest skips mappings, `category_rules`, and the model. The expense is still posted (`pending_category`, `needs_review`) so totals keep the amount; it does not disappear.
+- Ledger is asked via the existing questions + `aggregator_unplanned` escalation (webhook when configured). The prompt asks for the **underlying shop** and **Pay Now vs instalments**, with those two choices only — no category grid.
+- One answer applies to **that charge only**. `resolve_aggregator` (`POST /api/v1/agent/actions`) sets store / payment / optional category on that row and does not write `merchant_mappings` or `category_rules`. Telegram category taps and `upsertCategoryRule` are blocked for Mintpay the same way.
+- `upsert_mapping` for Mintpay is rejected. Duplicate SMS reuse the same question (`dedupe_key`). Ordinary merchants (Uber rules, Groq for unknown shops) are unchanged.
+- Existing mis-labelled Mintpay rows are **not** bulk-edited.
+
+**Not in this change:** instalment-plan auto-link (`bnpl_plans` is not implemented). No production writes.
+
+**Tests:** fictional Mintpay / Uber / Keells / cafe names only.
+
 ## Telegram category apply and Groq fallback
 
 **Before this:** a reply to a `pending_category` SMS card was saved as a **note**, so the web still showed the slug `pending_category`. Category buttons mixed in ghost names (`Food`, `Transport`) from `category_rules`. Typing **Other** did not insert a row in `categories`, so the dashboard icon map missed it. Groq `json_validate_failed` on `sms_category` could fail the guess path. The Telegram webhook returned 200 before the category write finished.
@@ -15,7 +31,7 @@ Plain-English notes on each phase of the autonomy work.
 - The transactions page labels `pending_category` as **Needs category** and refetches on focus with a 5s `staleTime`.
 - Category apply logs `SmsCategory telegram_applied` with `{ id, category }` only. The `/telegram` webhook waits for callback and reply writes before 200.
 - Groq `json_validate_failed` / empty JSON / a thrown guess leaves the charge `pending_category` and asks. No blank or random category.
-- Mintpay is never mapped, guessed, or learned as a global category (compatible with the unmerged aggregator PR). A one-off tap still files that charge only.
+- Mintpay is never mapped, guessed, or learned as a global category. A reply names the shop on that charge only; it does not write a MINTPAY rule.
 - Optional: if `TELEGRAM_WEBHOOK_URL` is HTTPS, boot calls `setWebhook` with `callback_query` (idempotent; failures are skipped).
 
 **Tests:** fictional merchants and amounts only (NEWCAFE, ODD MERCHANT XYZ, PETS VET, …). No production writes, no secrets.
