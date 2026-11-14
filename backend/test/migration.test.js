@@ -74,3 +74,39 @@ describe('migration backup', () => {
     live.close();
   });
 });
+
+describe('007 remap Food/Transport rules', () => {
+  it('rewrites seeded rules onto existing category names and leaves transaction rows alone', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suspense-rules-007-'));
+    const dbPath = path.join(dir, 'expenses.db');
+    boot(dbPath);
+
+    const live = new Database(dbPath);
+    live.prepare("UPDATE category_rules SET category = 'Food' WHERE pattern = 'UBER EATS'").run();
+    live.prepare("UPDATE category_rules SET category = 'Transport' WHERE pattern = 'UBER'").run();
+    live.prepare(`
+      INSERT INTO transactions (amount, type, category, date, created_at)
+      VALUES (88.5, 'expense', 'Food', '2026-10-02', '2026-10-02T00:00:00Z')
+    `).run();
+    live.exec("DELETE FROM schema_migrations WHERE name = '007_remap_food_transport_rules'");
+    live.close();
+
+    const out = boot(dbPath);
+    assert.match(out, /Applied migration 007_remap_food_transport_rules/);
+
+    const after = new Database(dbPath, { readonly: true });
+    assert.equal(
+      after.prepare("SELECT category FROM category_rules WHERE pattern = 'UBER EATS'").get().category,
+      'Uber Eats',
+    );
+    assert.equal(
+      after.prepare("SELECT category FROM category_rules WHERE pattern = 'UBER'").get().category,
+      'Uber',
+    );
+    assert.equal(
+      after.prepare("SELECT category FROM transactions WHERE amount = 88.5").get().category,
+      'Food',
+    );
+    after.close();
+  });
+});

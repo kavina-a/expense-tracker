@@ -437,6 +437,18 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    name: '007_remap_food_transport_rules',
+    // Mapping-rule correction only. No transaction rows are rewritten.
+    sql: `
+      UPDATE category_rules SET category = 'Uber Eats'
+       WHERE pattern = 'UBER EATS' AND category = 'Food';
+      UPDATE category_rules SET category = 'Fast Food'
+       WHERE pattern IN ('FOODPANDA', 'PICKME FOOD') AND category = 'Food';
+      UPDATE category_rules SET category = 'Uber'
+       WHERE pattern = 'UBER' AND category = 'Transport';
+    `,
+  },
 ];
 
 function appliedMigrationNames() {
@@ -555,10 +567,10 @@ function seedCategories() {
 seedCategories();
 
 const DEFAULT_CATEGORY_RULES = [
-  { pattern: 'UBER EATS', category: 'Food' },
-  { pattern: 'FOODPANDA', category: 'Food' },
-  { pattern: 'PICKME FOOD', category: 'Food' },
-  { pattern: 'UBER', category: 'Transport' },
+  { pattern: 'UBER EATS', category: 'Uber Eats' },
+  { pattern: 'FOODPANDA', category: 'Fast Food' },
+  { pattern: 'PICKME FOOD', category: 'Fast Food' },
+  { pattern: 'UBER', category: 'Uber' },
 ];
 
 function seedCategoryRules() {
@@ -576,6 +588,8 @@ seedCategoryRules();
 
 function matchCategoryRule(merchant) {
   if (!merchant) return null;
+  const { isAggregatorMerchant } = require('./sms/aggregators');
+  if (isAggregatorMerchant(merchant)) return null;
   const hay = String(merchant).toUpperCase();
   const rules = db.prepare('SELECT pattern, category FROM category_rules').all()
     .sort((a, b) => b.pattern.length - a.pattern.length);
@@ -590,6 +604,8 @@ function resolveCategory(merchant) {
 }
 
 function upsertCategoryRule(pattern, category) {
+  const { isAggregatorMerchant } = require('./sms/aggregators');
+  if (isAggregatorMerchant(pattern)) return null;
   const key = String(pattern || '').trim().toUpperCase();
   const name = String(category || '').trim();
   if (!key || !name) return null;
@@ -599,6 +615,37 @@ function upsertCategoryRule(pattern, category) {
     ON CONFLICT(pattern) DO UPDATE SET category = excluded.category
   `).run(key, name, new Date().toISOString());
   return db.prepare('SELECT * FROM category_rules WHERE pattern = ?').get(key);
+}
+
+function listExpenseCategoryNames() {
+  return db.prepare(`
+    SELECT name FROM categories
+    WHERE (type = 'expense' OR type IS NULL)
+      AND name NOT IN ('pending_category', 'Uncategorized')
+    ORDER BY name COLLATE NOCASE ASC
+  `).all().map((row) => row.name);
+}
+
+function findCategoryByName(name) {
+  const needle = String(name || '').trim().toLowerCase();
+  if (!needle) return null;
+  return db.prepare('SELECT * FROM categories WHERE lower(name) = ?').get(needle) || null;
+}
+
+function resolveOrCreateExpenseCategory(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed || /^pending_category$/i.test(trimmed)) return null;
+  if (/^uncategorized$/i.test(trimmed)) return 'Uncategorized';
+  const existing = findCategoryByName(trimmed);
+  if (existing) return existing.name;
+  try {
+    insertCategory({ name: trimmed, type: 'expense' });
+  } catch (err) {
+    const raced = findCategoryByName(trimmed);
+    if (raced) return raced.name;
+    throw err;
+  }
+  return findCategoryByName(trimmed)?.name || trimmed;
 }
 
 function listCategoriesInUse() {
@@ -1623,6 +1670,9 @@ module.exports = {
   matchCategoryRule,
   resolveCategory,
   upsertCategoryRule,
+  listExpenseCategoryNames,
+  findCategoryByName,
+  resolveOrCreateExpenseCategory,
   listCategoriesInUse,
   updateSmsExpense,
   findSmsExpenseByNotifyMessageId,

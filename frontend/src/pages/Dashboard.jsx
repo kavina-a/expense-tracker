@@ -419,7 +419,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-bold text-ink truncate">{tx.description || tx.category}</p>
+                      <p className="text-sm font-bold text-ink truncate">{tx.description || (tx.category === 'pending_category' ? 'Needs category' : tx.category)}</p>
                       {isRecurring && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber border border-ink text-ink font-bold shrink-0">RECURRING</span>}
                     </div>
                     <p className="text-[11px] text-warm-500 mt-0.5">{fmtDateLabel(tx.date)}</p>
