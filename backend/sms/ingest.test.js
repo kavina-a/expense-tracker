@@ -77,7 +77,7 @@ describe('SMS ingest', () => {
     const credit = await ingest({ text: creditUber });
 
     assert.equal(purchase.action, 'inserted');
-    assert.equal(purchase.category, 'Transport');
+    assert.equal(purchase.category, 'Uber');
     assert.equal(purchase.transaction.source, 'sms');
     // Uber charges start as holds; the settle step may post them straight after (old dates).
     assert.equal(purchase.transaction.status, 'provisional');
@@ -164,11 +164,11 @@ describe('SMS ingest', () => {
     assert.equal(smsExpenseRows(33300, 'UBER').length, 0);
   });
 
-  it('maps UBER EATS to Food and leaves unknown merchants pending', async () => {
+  it('maps UBER EATS to Uber Eats and leaves unknown merchants pending', async () => {
     const eats = await ingest({
       text: 'SMS ALERT:INTERNET, Account:2080***2939,Location:UBER EATS, LK,Amount(Approx.):900.00 LKR,Av.Bal:100.00 LKR,Date:02.02.26,Time:12:00, Hot Line:0112462462',
     });
-    assert.equal(eats.category, 'Food');
+    assert.equal(eats.category, 'Uber Eats');
     const mintpay = await ingest({ text: purchaseMintpay });
     assert.equal(mintpay.action, 'inserted');
     assert.equal(mintpay.category, 'pending_category');
@@ -351,7 +351,7 @@ describe('POST /api/sms-ingest', () => {
     const body = await res.json();
     assert.equal(body.ok, true);
     assert.equal(body.action, 'inserted');
-    assert.equal(body.category, 'Transport');
+    assert.equal(body.category, 'Uber');
     assert.equal(body.parsed.merchant, 'UBER');
     assert.equal(cents(body.parsed.amount), 4250);
     assert.equal(body.notified, false);

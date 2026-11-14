@@ -18,6 +18,24 @@ Plain-English notes on each phase of the autonomy work.
 
 **Tests:** fictional Mintpay / Uber / Keells / cafe names only.
 
+## Telegram category apply and Groq fallback
+
+**Before this:** a reply to a `pending_category` SMS card was saved as a **note**, so the web still showed the slug `pending_category`. Category buttons mixed in ghost names (`Food`, `Transport`) from `category_rules`. Typing **Other** did not insert a row in `categories`, so the dashboard icon map missed it. Groq `json_validate_failed` on `sms_category` could fail the guess path. The Telegram webhook returned 200 before the category write finished.
+
+**What changed**
+
+- While an SMS row is `pending_category`, a reply-to or a category-button tap runs `applyCategory`. Notes are only attached after a category is set.
+- Telegram (and Ledger category choices) list real expense names from the `categories` table, not rule ghosts.
+- Seeded rules and additive migration `007_remap_food_transport_rules` point `UBER EATS` → Uber Eats, `FOODPANDA` / `PICKME FOOD` → Fast Food, `UBER` → Uber. Transaction rows are not bulk-edited.
+- `applyCategory` matches names case-insensitively. An **Other**-typed new name is inserted as an expense category.
+- The transactions page labels `pending_category` as **Needs category** and refetches on focus with a 5s `staleTime`.
+- Category apply logs `SmsCategory telegram_applied` with `{ id, category }` only. The `/telegram` webhook waits for callback and reply writes before 200.
+- Groq `json_validate_failed` / empty JSON / a thrown guess leaves the charge `pending_category` and asks. No blank or random category.
+- Mintpay is never mapped, guessed, or learned as a global category. A reply names the shop on that charge only; it does not write a MINTPAY rule.
+- Optional: if `TELEGRAM_WEBHOOK_URL` is HTTPS, boot calls `setWebhook` with `callback_query` (idempotent; failures are skipped).
+
+**Tests:** fictional merchants and amounts only (NEWCAFE, ODD MERCHANT XYZ, PETS VET, …). No production writes, no secrets.
+
 ## Ledger income capture and corrections
 
 **Before this:** agent capture only booked **expenses** on an exact date+amount match. Nearby SMS amounts could not be corrected, income (salary/tutoring) had no capture type, OpenAPI treated `payload` as an untyped object, and Cloudflare mapped to Taggy if the description contained **either** DOMAIN or TAGGY.

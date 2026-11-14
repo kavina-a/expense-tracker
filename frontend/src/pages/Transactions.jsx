@@ -38,6 +38,10 @@ function fmtRs(n) {
   return `LKR ${Number(n).toLocaleString('en-US')}`
 }
 
+function categoryLabel(tx) {
+  return tx?.category === 'pending_category' ? 'Needs category' : tx.category
+}
+
 function exportCSV(transactions, filenameLabel) {
   const header = 'Date,Type,Category,Description,Amount'
   const rows = transactions.map(t => {
@@ -218,7 +222,7 @@ function TxRow({ tx, cat, onDelete, onEdit, isConfirming, onConfirm, onCancel, s
         {cat.icon || '📦'}
       </div>
       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => onEdit(tx)}>
-        <p className="text-sm font-bold text-ink truncate">{tx.category}</p>
+        <p className="text-sm font-bold text-ink truncate">{categoryLabel(tx)}</p>
         {tx.description && <p className="text-[11px] text-warm-500 truncate mt-0.5">{tx.description}</p>}
         <p className="text-[10px] text-warm-400 mt-0.5">{fmtDateLabel(tx.date)} · {tx.date}</p>
       </div>
@@ -307,6 +311,8 @@ export default function Transactions() {
   const txQuery = useQuery({
     queryKey: ['transactions', month, tab, category],
     queryFn:  () => getTransactions({ month, type: tab || undefined, category: category || undefined }),
+    staleTime: 5_000,
+    refetchOnWindowFocus: true,
   })
 
   const invalidateAll = () => {
@@ -349,7 +355,8 @@ export default function Transactions() {
       const q = search.toLowerCase()
       result = result.filter(t =>
         t.description?.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q)
+        t.category.toLowerCase().includes(q) ||
+        (t.category === 'pending_category' && 'needs category'.includes(q))
       )
     }
     // Sort

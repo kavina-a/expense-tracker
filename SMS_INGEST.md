@@ -91,11 +91,11 @@ That debit becomes `reversed`. The others stay `posted`.
 
 Masked numbers are stored only in canonical form: first 4 digits, `***`, last 2 digits. `2080***2939` and `20802XXXXX39` both become `2080***39`. The full number is never reconstructed. The original SMS text is kept in `sms_raw`.
 
-`category_rules` maps a merchant substring to a category, longest pattern first, case-insensitive. Seeded rules: `UBER EATS`, `FOODPANDA`, and `PICKME FOOD` → Food; `UBER` → Transport.
+`category_rules` maps a merchant substring to a category, longest pattern first, case-insensitive. Seeded rules use names that already exist in `categories`: `UBER EATS` → Uber Eats; `FOODPANDA` and `PICKME FOOD` → Fast Food; `UBER` → Uber. Migration `007_remap_food_transport_rules` rewrites older Food/Transport rules the same way. Existing transaction rows are not bulk-edited.
 
 **Mintpay is not a shop.** `MINTPAY` / `MINTPAY PVT LTD` skip mappings, `category_rules`, and Groq. The charge stays on the books as `pending_category` and Ledger is asked what the underlying purchase was and whether it was Pay Now or instalments. Answering one Mintpay charge does not teach a global Mintpay category. Use `resolve_aggregator` on `POST /api/v1/agent/actions` for that row only.
 
-When nothing matches (and the merchant is not an aggregator), the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODEL` the Telegram parser uses) to pick one category the ledger already uses. A name it returns that is on that list is saved on the expense and written back into `category_rules`, so the next SMS for that merchant does not call the model. `unsure`, an invented name, or a Groq failure leaves `category` as `pending_category`. That is not the same as `Uncategorized`: pending means the question is still open. `Uncategorized` is only written when you tap that button in Telegram.
+When nothing matches (and the merchant is not an aggregator), the server asks Groq (the same `GROQ_API_KEY` / `GROQ_MODEL` the Telegram parser uses) to pick one name from the expense `categories` table — not ghost names that only lived on old rules. A name it returns that is on that list is saved on the expense and written back into `category_rules`, so the next SMS for that merchant does not call the model. `unsure`, an invented name, empty JSON, or a Groq `json_validate_failed` leaves `category` as `pending_category` and asks. That is not the same as `Uncategorized`: pending means the question is still open. `Uncategorized` is only written when you tap that button in Telegram.
 
 ## Where prompts go: `NOTIFY_CHANNEL`
 
@@ -108,13 +108,15 @@ When nothing matches (and the merchant is not an aggregator), the server asks Gr
 
 ## Telegram notes
 
-(These apply when `NOTIFY_CHANNEL=telegram`.) Every new SMS expense is sent to `MY_TELEGRAM_CHAT_ID`, including ones that already have a category. The message has the merchant, amount, and category (or category buttons when it is still `pending_category`), plus **👍 No note needed**. Reply to that message to set `note` on that expense. The note is never filled in by the model.
+(These apply when `NOTIFY_CHANNEL=telegram`.) Every new SMS expense is sent to `MY_TELEGRAM_CHAT_ID`, including ones that already have a category. The message has the merchant, amount, and category (or category buttons when it is still `pending_category`), plus **👍 No note needed**. Category buttons come from the expense `categories` table only.
+
+While a normal SMS row is still `pending_category`, a reply to that message (or a category-button tap) runs `applyCategory`: it matches an existing name case-insensitively, or inserts a new expense category so the web `catMap` can show it. Notes are only saved once a category is set. The note is never filled in by the model. A Mintpay reply is the shop for **that charge only** (Pay Now / instalments buttons), not a global category.
 
 Ignoring the message changes nothing. **No note needed** sets `note_reviewed` and does not set `note`. Three of those taps in a row for the same merchant, with no note in between, asks whether to mute that merchant. **Yes, mute** stops future note messages for that merchant; category matching still runs. **No, keep asking** waits for another three taps before asking again.
 
-Button taps and text replies are different Telegram updates. A category button, **Other**, or **Uncategorized** updates the category and the rule. A text reply sets the note, unless you tapped **Other** and are answering with a category name.
+Button taps and text replies are different Telegram updates. A category button, **Other**, or **Uncategorized** updates the category (and the merchant rule, except for aggregators such as Mintpay). A category apply logs `SmsCategory telegram_applied` with the transaction id and category only. The webhook waits for that write before it returns 200.
 
-The bot only receives button taps after the webhook allows `callback_query`. Re-register it once:
+If `TELEGRAM_WEBHOOK_URL` is an `https://` URL, boot registers the webhook with `allowed_updates` of `message` and `callback_query`. That call is idempotent. Otherwise re-register it once:
 
 ```bash
 curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \

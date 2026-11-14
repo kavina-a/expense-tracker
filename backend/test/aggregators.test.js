@@ -199,7 +199,7 @@ describe('Mintpay is a payment aggregator', () => {
       text: purchaseUber.replace('207.65', '44.44'),
       guessCategory: async () => ({ confident: true, category: 'Groceries' }),
     });
-    assert.equal(uber.category, 'Transport');
+    assert.equal(uber.category, 'Uber');
     assert.equal(uber.category_via, 'rule');
 
     let guessed = 0;
